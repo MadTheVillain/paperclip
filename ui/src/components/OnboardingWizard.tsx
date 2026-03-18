@@ -149,31 +149,55 @@ function parseHiringPlan(markdown: string): HiringRole[] {
   const roles: HiringRole[] = [];
   const seen = new Set<string>();
 
-  // Split into ## sections (each role is a ## heading)
-  const roleSections = markdown.split(/^##\s+/m).slice(1).filter(Boolean);
+  // Find role headings: any ## or ### heading with a numbered prefix
+  // like "### 1. Content Marketing Officer" or "## Role 2: CTO"
+  const rolePattern = /^(?:role\s*\d+[:.]\s*|\d+[.)]\s*)/i;
+  const roleHeadingRegex = /^#{2,3}\s+(.+)$/gm;
+  let match: RegExpExecArray | null;
 
-  for (const section of roleSections) {
-    const lines = section.split("\n");
-    const titleLine = lines[0]?.trim() ?? "";
+  // First pass: find all role heading positions (start of line, end of heading)
+  const rolePositions: Array<{ title: string; lineStart: number; contentStart: number }> = [];
+  while ((match = roleHeadingRegex.exec(markdown)) !== null) {
+    if (rolePattern.test(match[1].trim())) {
+      rolePositions.push({
+        title: match[1].trim(),
+        lineStart: match.index,
+        contentStart: match.index + match[0].length,
+      });
+    }
+  }
 
-    // Extract role name — match "Role N: Name" or just "N. Name" or plain name
-    let name = titleLine
+  // Extract body for each role (from heading end to the next role heading start)
+  const sections: Array<{ title: string; body: string }> = [];
+  for (let i = 0; i < rolePositions.length; i++) {
+    const end = i + 1 < rolePositions.length
+      ? rolePositions[i + 1].lineStart
+      : markdown.length;
+    sections.push({
+      title: rolePositions[i].title,
+      body: markdown.slice(rolePositions[i].contentStart, end),
+    });
+  }
+
+  for (const section of sections) {
+    if (!rolePattern.test(section.title)) continue;
+
+    let name = section.title
       .replace(/^role\s*\d*[:.]\s*/i, "")
       .replace(/^\d+[.)]\s*/, "")
       .replace(/\*\*/g, "")
       .trim();
 
-    // Skip non-role sections
-    const skipPatterns = /^(mission|hiring approach|hiring|roles|approach|open|phase|deferred|timeline|budget|summary|next steps|overview|notes|questions|appendix|---)/i;
-    if (skipPatterns.test(name) || name.length < 3) continue;
+    if (name.length < 3) continue;
     if (seen.has(name.toLowerCase())) continue;
 
     // Parse content: **Label:** bullets and ### sub-sections
     const fields: Record<string, string[]> = {};
     let currentField: string | null = null;
+    const bodyLines = section.body.split("\n");
 
-    for (let i = 1; i < lines.length; i++) {
-      const raw = lines[i];
+    for (let i = 0; i < bodyLines.length; i++) {
+      const raw = bodyLines[i];
       const trimmed = raw.trim();
       if (!trimmed) continue;
 
@@ -215,12 +239,21 @@ function parseHiringPlan(markdown: string): HiringRole[] {
 
     const join = (arr?: string[]) => (arr ?? []).join("\n");
 
+    // If no summary, use first line of expertise
+    let summary = join(fields.summary);
+    let expertise = join(fields.expertise);
+    if (!summary && expertise) {
+      const lines = expertise.split("\n");
+      summary = lines[0];
+      expertise = lines.slice(1).join("\n");
+    }
+
     seen.add(name.toLowerCase());
     roles.push({
       id: nextRoleId(),
       name,
-      summary: join(fields.summary),
-      expertise: join(fields.expertise),
+      summary,
+      expertise,
       priorities: join(fields.priorities),
       boundaries: join(fields.boundaries),
       tools: join(fields.tools),
@@ -231,27 +264,64 @@ function parseHiringPlan(markdown: string): HiringRole[] {
     });
   }
 
-  // Fallback: simple bullet parsing from comment text
+  // Fallback: parse "N. **Role Name**" with indented bullets
   if (roles.length === 0) {
     const lines = markdown.split("\n");
-    for (const line of lines) {
-      const bulletMatch = line.match(
-        /^\s*(?:[-*]|\d+[.)]\s*)\s*\*\*([^*]+)\*\*[:\s—–-]*(.*)$/
-      );
-      if (!bulletMatch) continue;
-      const name = bulletMatch[1].trim();
-      const summary = cleanMd(bulletMatch[2]);
-      if (seen.has(name.toLowerCase())) continue;
-      const skip = /^(phase|month|step|update|note|question|summary|timeline|priority|plan|total|budget|immediate|hire|\d+ immediate)/i;
-      if (skip.test(name) || name.length < 3) continue;
+    let currentRole: HiringRole | null = null;
 
-      seen.add(name.toLowerCase());
-      roles.push({
-        id: nextRoleId(), name, summary,
-        expertise: "", priorities: "", boundaries: "",
-        tools: "", communication: "", collaboration: "",
-        enabled: true, editing: false,
-      });
+    for (const line of lines) {
+      // Match numbered bold role: "1. **Content Strategist / CMO**"
+      const roleMatch = line.match(/^\s*(\d+)[.)]\s+\*\*([^*]+)\*\*/);
+      if (roleMatch) {
+        const name = roleMatch[2].trim();
+        const skip = /^(phase|month|step|update|note|question|summary|timeline|priority|plan|total|budget|immediate|hire)/i;
+        if (skip.test(name) || name.length < 3) continue;
+        if (seen.has(name.toLowerCase())) continue;
+
+        if (currentRole) roles.push(currentRole);
+        seen.add(name.toLowerCase());
+        currentRole = {
+          id: nextRoleId(), name, summary: "", expertise: "",
+          priorities: "", boundaries: "", tools: "",
+          communication: "", collaboration: "",
+          enabled: true, editing: false,
+        };
+        continue;
+      }
+
+      // Indented bullets under the current role
+      if (currentRole && /^\s{2,}[-*]/.test(line)) {
+        const cleaned = cleanMd(line);
+        if (!cleaned) continue;
+
+        // Check for labeled bullet: "*Why first:*", "**Tools:**", etc.
+        const labelMatch = cleaned.match(/^\*?([^:*]+)\*?:\s*(.*)/);
+        if (labelMatch) {
+          const field = classifyBullet(labelMatch[1].trim());
+          if (field && typeof currentRole[field] === "string") {
+            const val = labelMatch[2].trim();
+            const prev = currentRole[field] as string;
+            (currentRole as unknown as Record<string, unknown>)[field] = prev
+              ? `${prev}\n${val}` : val;
+            continue;
+          }
+        }
+        // Default: add to expertise
+        currentRole.expertise = currentRole.expertise
+          ? `${currentRole.expertise}\n${cleaned}` : cleaned;
+      }
+    }
+    if (currentRole) roles.push(currentRole);
+
+    // If summary is empty, use the first line of expertise as the summary
+    for (const role of roles) {
+      if (!role.summary && role.expertise) {
+        const firstLine = role.expertise.split("\n")[0];
+        if (firstLine) {
+          role.summary = firstLine;
+          role.expertise = role.expertise.split("\n").slice(1).join("\n");
+        }
+      }
     }
   }
 
@@ -710,18 +780,36 @@ export function OnboardingWizard() {
         queryKey: queryKeys.agents.list(createdCompanyId)
       });
 
-      // Create the planning task and kick off the conversation
+      // Create the planning task unassigned — the CEO only gets assigned
+      // when the user sends their first message (user controls initiation)
       const planningIssue = await issuesApi.create(createdCompanyId, {
         title: "Build hiring plan with CEO",
-        description: `Company mission: ${companyGoal}\n\nCollaborate with the board to create a hiring plan for the company.`,
-        assigneeAgentId: agent.id,
-        status: "in_progress"
+        description: `Company mission: ${companyGoal}
+
+Collaborate with the board to create a hiring plan for the company.
+
+IMPORTANT: When writing the hiring plan document, use this exact format for EACH role. Use ## headings for each role (e.g. "## 1. Role Name") and ### sub-headings for each section within the role:
+
+## 1. Role Name
+### Summary
+One-line description of this role.
+### Expertise & Responsibilities
+What this agent does, detailed responsibilities.
+### Priorities
+Ordered list of what matters most.
+### Boundaries
+What this role should NOT do.
+### Tools & Permissions
+What tools and access this role needs.
+### Communication
+Tone, style, and interaction guidelines.
+### Collaboration & Escalation
+Who this role works with, escalation paths.
+
+Follow this structure for every role in the plan.`,
+        status: "backlog"
       });
       setPlanningTaskId(planningIssue.id);
-      await issuesApi.addComment(
-        planningIssue.id,
-        `Our company mission is: ${companyGoal}\n\nLet's build a hiring plan together. What roles do you think we need to accomplish this mission?`
-      );
 
       setStep(4);
     } catch (err) {
@@ -818,18 +906,19 @@ export function OnboardingWizard() {
       });
 
       setSelectedCompanyId(createdCompanyId);
-      reset();
-      closeOnboarding();
-      navigate(
-        createdCompanyPrefix
-          ? `/${createdCompanyPrefix}/issues`
-          : `/issues`
-      );
+      setStep(6); // → orientation screen
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create hire tasks");
     } finally {
       setLoading(false);
     }
+  }
+
+  function handleFinishOnboarding() {
+    const prefix = createdCompanyPrefix;
+    reset(); // clears localStorage
+    closeOnboarding();
+    navigate(prefix ? `/${prefix}/dashboard` : `/dashboard`);
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
@@ -886,9 +975,8 @@ export function OnboardingWizard() {
                     { step: 1 as Step, label: "Mission", icon: Building2 },
                     { step: 2 as Step, label: "Launch", icon: Rocket },
                     { step: 3 as Step, label: "CEO", icon: Bot },
-                    { step: 4 as Step, label: "Chat", icon: Sparkles },
-                    { step: 5 as Step, label: "Plan", icon: ListTodo },
-                    { step: 6 as Step, label: "Hire", icon: Bot }
+                    { step: 4 as Step, label: "Plan", icon: Sparkles },
+                    { step: 5 as Step, label: "Review", icon: ListTodo },
                   ] as const
                 ).map(({ step: s, label, icon: Icon }) => (
                   <button
@@ -1015,7 +1103,7 @@ export function OnboardingWizard() {
                       </div>
                       <button
                         className="text-[11px] text-muted-foreground hover:text-foreground transition-colors"
-                        onClick={() => { setMissionPath(null); setCompanyGoal(""); }}
+                        onClick={() => setMissionPath(null)}
                       >
                         ← Choose a different path
                       </button>
@@ -1084,7 +1172,7 @@ export function OnboardingWizard() {
                       )}
                       <button
                         className="text-[11px] text-muted-foreground hover:text-foreground transition-colors block"
-                        onClick={() => { setMissionPath(null); setQ1(""); setQ2(""); setQ3(""); setQ4(""); }}
+                        onClick={() => setMissionPath(null)}
                       >
                         ← Choose a different path
                       </button>
@@ -1597,6 +1685,8 @@ export function OnboardingWizard() {
                       taskId={planningTaskId}
                       agentId={createdAgentId!}
                       agentName={agentName}
+                      companyName={companyName}
+                      companyGoal={companyGoal}
                       onPlanDetected={(md) => setPlanContent(md)}
                       onReviewPlan={async () => {
                         // Always fetch the latest plan document for the richest content
@@ -1730,43 +1820,58 @@ export function OnboardingWizard() {
                 </div>
               )}
 
-              {/* Step 6: Make your first hires */}
+              {/* Step 6: Welcome & orientation */}
               {step === 6 && (
-                <div className="space-y-5">
-                  <div className="flex items-center gap-3 mb-1">
-                    <div className="bg-muted/50 p-2">
-                      <Rocket className="h-5 w-5 text-muted-foreground" />
-                    </div>
-                    <div>
-                      <h3 className="font-medium">Make your first hires</h3>
-                      <p className="text-xs text-muted-foreground">
-                        Your CEO will create these roles for{" "}
-                        <span className="font-medium text-foreground">{companyName}</span>.
-                      </p>
-                    </div>
+                <div className="space-y-6 py-2">
+                  <div className="text-center">
+                    <div className="text-4xl mb-3">🎉</div>
+                    <h3 className="text-lg font-semibold">
+                      {companyName} is ready to go!
+                    </h3>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      Your CEO is now hiring{" "}
+                      {hiringRoles.filter((r) => r.enabled && r.name.trim()).length} roles.
+                      Here's what to expect on your dashboard:
+                    </p>
                   </div>
-                  <div className="border border-border divide-y divide-border rounded-md">
-                    {hiringRoles
-                      .filter((r) => r.enabled && r.name.trim())
-                      .map((role) => (
-                        <div
-                          key={role.id}
-                          className="flex items-center gap-3 px-3 py-2.5"
-                        >
-                          <Bot className="h-4 w-4 text-muted-foreground shrink-0" />
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium truncate">
-                              {role.name}
-                            </p>
-                            <p className="text-xs text-muted-foreground truncate">
-                              {role.summary || "New hire"}
-                            </p>
-                          </div>
-                          <span className="text-[10px] text-amber-500 font-medium">
-                            To hire
-                          </span>
-                        </div>
-                      ))}
+
+                  <div className="space-y-3">
+                    <div className="flex items-start gap-3 rounded-md border border-border px-3 py-2.5">
+                      <ListTodo className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
+                      <div>
+                        <p className="text-sm font-medium">Tasks</p>
+                        <p className="text-xs text-muted-foreground">
+                          Your CEO has hire tasks queued up. Watch them progress from todo → in progress → done.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-3 rounded-md border border-border px-3 py-2.5">
+                      <Bot className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
+                      <div>
+                        <p className="text-sm font-medium">Agents</p>
+                        <p className="text-xs text-muted-foreground">
+                          New agents will appear here as your CEO completes each hire. You may need to approve them.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-3 rounded-md border border-border px-3 py-2.5">
+                      <Check className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
+                      <div>
+                        <p className="text-sm font-medium">Approvals</p>
+                        <p className="text-xs text-muted-foreground">
+                          Check your inbox for pending approvals. Your CEO may need your sign-off before agents can start working.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-3 rounded-md border border-border px-3 py-2.5">
+                      <Building2 className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
+                      <div>
+                        <p className="text-sm font-medium">Dashboard</p>
+                        <p className="text-xs text-muted-foreground">
+                          Your command center — see agent activity, costs, and overall company health at a glance.
+                        </p>
+                      </div>
+                    </div>
                   </div>
                 </div>
               )}
@@ -1794,7 +1899,7 @@ export function OnboardingWizard() {
                   )}
                 </div>
                 <div className="flex items-center gap-2">
-                  {step === 1 && (
+                  {step === 1 && missionPath && (missionPath !== "questionnaire" || missionConfirmed) && (
                     <Button
                       size="sm"
                       disabled={!companyName.trim() || !companyGoal.trim() || loading}
@@ -1845,21 +1950,21 @@ export function OnboardingWizard() {
                   {step === 5 && (
                     <Button
                       size="sm"
-                      disabled={!hiringRoles.some((r) => r.enabled && r.name.trim())}
-                      onClick={() => setStep(6)}
+                      disabled={!hiringRoles.some((r) => r.enabled && r.name.trim()) || loading}
+                      onClick={handleLaunch}
                     >
-                      <Check className="h-3.5 w-3.5 mr-1" />
-                      Approve hiring plan
-                    </Button>
-                  )}
-                  {step === 6 && (
-                    <Button size="sm" disabled={loading} onClick={handleLaunch}>
                       {loading ? (
                         <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
                       ) : (
-                        <Rocket className="h-3.5 w-3.5 mr-1" />
+                        <Check className="h-3.5 w-3.5 mr-1" />
                       )}
-                      {loading ? "Creating tasks..." : "Make your first hires"}
+                      {loading ? "Creating hires..." : "Approve & hire"}
+                    </Button>
+                  )}
+                  {step === 6 && (
+                    <Button size="sm" onClick={handleFinishOnboarding}>
+                      <Rocket className="h-3.5 w-3.5 mr-1" />
+                      Go to dashboard
                     </Button>
                   )}
                 </div>

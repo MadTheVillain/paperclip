@@ -13,6 +13,8 @@ interface OnboardingChatProps {
   taskId: string;
   agentId: string;
   agentName: string;
+  companyName: string;
+  companyGoal: string;
   onPlanDetected?: (planMarkdown: string) => void;
   onReviewPlan?: () => void;
 }
@@ -81,6 +83,8 @@ export function OnboardingChat({
   taskId,
   agentId,
   agentName,
+  companyName,
+  companyGoal,
   onPlanDetected,
   onReviewPlan,
 }: OnboardingChatProps) {
@@ -96,7 +100,7 @@ export function OnboardingChat({
     string | null
   >(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const {
     data: rawComments,
@@ -165,14 +169,12 @@ export function OnboardingChat({
     }
   }, [comments, onPlanDetected, detectedPlanCommentId, ignoreBeforeCommentId, taskId]);
 
-  const handleSend = useCallback(async () => {
-    const body = input.trim();
-    if (!body || sending) return;
+  const sendMessage = useCallback(async (body: string) => {
+    const trimmed = body.trim();
+    if (!trimmed || sending) return;
     setSending(true);
     try {
       // Ensure the task is assigned to the CEO and in_progress before commenting.
-      // The CEO tends to unassign itself and set status to in_review after responding,
-      // which prevents the comment wakeup from working.
       try {
         await issuesApi.update(taskId, { assigneeUserId: null });
       } catch { /* may already be null */ }
@@ -183,11 +185,9 @@ export function OnboardingChat({
         });
       } catch { /* may already be assigned */ }
 
-      await issuesApi.addComment(taskId, body, true, true);
+      await issuesApi.addComment(taskId, trimmed, true, true);
       setInput("");
-      // Clear detected plan — user is asking for revisions, so the old plan
-      // is stale. A new plan will be detected when the CEO responds again.
-      // Mark the last known comment so the detector ignores older plans.
+      // Clear detected plan — user is asking for revisions
       const latestId = comments?.[comments.length - 1]?.id ?? null;
       setIgnoreBeforeCommentId(latestId);
       setDetectedPlanCommentId(null);
@@ -198,7 +198,11 @@ export function OnboardingChat({
       setSending(false);
       inputRef.current?.focus();
     }
-  }, [input, sending, taskId, queryClient]);
+  }, [sending, taskId, agentId, queryClient, comments]);
+
+  const handleSend = useCallback(() => {
+    sendMessage(input);
+  }, [input, sendMessage]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -257,11 +261,18 @@ export function OnboardingChat({
         ref={scrollRef}
         className="flex-1 overflow-y-auto space-y-3 mb-3 min-h-[180px] max-h-[320px] pr-1"
       >
-        {(!comments || comments.length === 0) && (
-          <p className="text-sm text-muted-foreground text-center py-4">
-            Starting conversation with {agentName}...
-          </p>
-        )}
+        {/* CEO welcome message + chips — delayed reveal */}
+        <WelcomeMessage
+          agentName={agentName}
+          companyName={companyName}
+          companyGoal={companyGoal}
+          hasComments={Boolean(comments?.length)}
+          onDiscuss={() => {
+            setInput("I want to discuss the plan before you get started.");
+            inputRef.current?.focus();
+          }}
+          onStart={() => sendMessage("Yes, get started on the hiring plan!")}
+        />
         {comments?.map((comment) => {
           const isAgent = Boolean(comment.authorAgentId);
           const isPlan =
@@ -355,15 +366,15 @@ export function OnboardingChat({
       )}
 
       {/* Input area */}
-      <div className="flex items-end gap-2 border-t border-border pt-3">
-        <textarea
+      <div className="flex items-center gap-2 border-t border-border pt-3">
+        <input
           ref={inputRef}
-          className="flex-1 rounded-md border border-border bg-transparent px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring placeholder:text-muted-foreground/50 resize-none min-h-[40px] max-h-[100px]"
-          placeholder={detectedPlanCommentId ? "Ask your CEO to revise the plan, or review it above..." : "Message your CEO..."}
+          type="text"
+          className="flex-1 rounded-md border border-border bg-transparent px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring placeholder:text-muted-foreground/50"
+          placeholder={detectedPlanCommentId ? "Ask your CEO to revise the plan..." : "Message your CEO..."}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          rows={1}
           autoFocus={!detectedPlanCommentId}
         />
         <Button
@@ -380,5 +391,91 @@ export function OnboardingChat({
         </Button>
       </div>
     </div>
+  );
+}
+
+function WelcomeMessage({
+  agentName,
+  companyName,
+  companyGoal,
+  hasComments,
+  onDiscuss,
+  onStart,
+}: {
+  agentName: string;
+  companyName: string;
+  companyGoal: string;
+  hasComments: boolean;
+  onDiscuss: () => void;
+  onStart: () => void;
+}) {
+  const [phase, setPhase] = useState<"waking" | "composing" | "message" | "chips">("waking");
+
+  useEffect(() => {
+    const t1 = setTimeout(() => setPhase("composing"), 2500);
+    const t2 = setTimeout(() => setPhase("message"), 5500);
+    const t3 = setTimeout(() => setPhase("chips"), 6500);
+    return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
+  }, []);
+
+  const showMessage = phase === "message" || phase === "chips";
+  const showChips = phase === "chips" && !hasComments;
+
+  return (
+    <>
+      {/* Message — appears after typing indicator */}
+      {showMessage && (
+        <div className="rounded-md px-3 py-2 text-sm bg-muted/50 border border-border mr-8 animate-in fade-in duration-300">
+          <div className="flex items-center gap-1.5 mb-1">
+            <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+              {agentName}
+            </span>
+          </div>
+          <p>
+            Hello board! Thank you for appointing me CEO of <strong>{companyName}</strong>.
+          </p>
+          <p className="mt-1">
+            Our mission is: <em>{companyGoal}</em>
+          </p>
+          <p className="mt-1">
+            I'm ready to build a hiring plan. Shall I get started?
+          </p>
+        </div>
+      )}
+
+      {/* Chips — fade in after message */}
+      {showChips && (
+        <div className="flex gap-2 ml-auto justify-end animate-in fade-in duration-500">
+          <button
+            className="rounded-full border border-border px-3 py-1 text-xs hover:bg-accent/50 transition-colors text-muted-foreground hover:text-foreground"
+            onClick={onDiscuss}
+          >
+            Let's discuss first
+          </button>
+          <button
+            className="rounded-full border border-foreground bg-foreground text-background px-3 py-1 text-xs hover:opacity-90 transition-opacity"
+            onClick={onStart}
+          >
+            Yes, get started!
+          </button>
+        </div>
+      )}
+
+      {/* Typing indicator — anchored at bottom of scroll area, before real status messages */}
+      {!showMessage && (
+        <div className="flex-1" />
+      )}
+      {!showMessage && (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground px-3 py-2">
+          <span className="relative flex h-2.5 w-2.5 shrink-0">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75" />
+            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-cyan-500" />
+          </span>
+          {phase === "waking"
+            ? `${agentName} is waking up...`
+            : `${agentName} is composing a message...`}
+        </div>
+      )}
+    </>
   );
 }
