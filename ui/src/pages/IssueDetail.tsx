@@ -61,10 +61,12 @@ import { ApprovalCard } from "../components/ApprovalCard";
 import { InlineEditor } from "../components/InlineEditor";
 import { IssueChatThread, type IssueChatComposerHandle } from "../components/IssueChatThread";
 import { IssueContinuationHandoff } from "../components/IssueContinuationHandoff";
+import { IssueDeliverablesSummaryChips } from "../components/IssueDeliverablesSummaryChips";
 import { IssueDocumentsSection } from "../components/IssueDocumentsSection";
 import { IssuesList } from "../components/IssuesList";
 import { IssueProperties } from "../components/IssueProperties";
 import { IssueRunLedger } from "../components/IssueRunLedger";
+import { IssueWorkProductTab } from "../components/IssueWorkProductTab";
 import { IssueWorkspaceCard } from "../components/IssueWorkspaceCard";
 import type { MentionOption } from "../components/MarkdownEditor";
 import { ImageGalleryModal } from "../components/ImageGalleryModal";
@@ -987,6 +989,12 @@ export function IssueDetail() {
     enabled: !!issueId,
     placeholderData: keepPreviousDataForSameQueryTail<IssueAttachment[]>(issueId ?? "pending"),
   });
+  const { data: deliverables, isLoading: deliverablesLoading } = useQuery({
+    queryKey: queryKeys.issues.deliverables(issueId!),
+    queryFn: () => issuesApi.getDeliverables(issueId!),
+    enabled: !!issueId,
+    placeholderData: keepPreviousData,
+  });
 
   const { data: liveRunCount = 0 } = useQuery<LiveRunForIssue[], Error, number>({
     queryKey: queryKeys.issues.liveRuns(issueId!),
@@ -1167,10 +1175,12 @@ export function IssueDetail() {
 
   const invalidateIssueDetail = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.detail(issueId!) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.issues.deliverables(issueId!) });
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.activity(issueId!) });
   }, [issueId, queryClient]);
   const invalidateIssueThreadLazily = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.detail(issueId!), refetchType: "inactive" });
+    queryClient.invalidateQueries({ queryKey: queryKeys.issues.deliverables(issueId!), refetchType: "inactive" });
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.activity(issueId!), refetchType: "inactive" });
   }, [issueId, queryClient]);
 
@@ -2406,6 +2416,8 @@ export function IssueDetail() {
           className="text-xl font-bold"
         />
 
+        <IssueDeliverablesSummaryChips summary={deliverables?.summary} />
+
         <InlineEditor
           value={issue.description ?? ""}
           onSave={(description) => updateIssue.mutateAsync({ description })}
@@ -2670,6 +2682,10 @@ export function IssueDetail() {
             <MessageSquare className="h-3.5 w-3.5" />
             Chat
           </TabsTrigger>
+          <TabsTrigger value="work-product" className="gap-1.5">
+            <Paperclip className="h-3.5 w-3.5" />
+            Work Product
+          </TabsTrigger>
           <TabsTrigger value="activity" className="gap-1.5">
             <ActivityIcon className="h-3.5 w-3.5" />
             Activity
@@ -2717,6 +2733,15 @@ export function IssueDetail() {
               onImageClick={handleChatImageClick}
             />
           ) : null}
+        </TabsContent>
+
+        <TabsContent value="work-product">
+          <IssueWorkProductTab
+            deliverables={deliverables}
+            projectId={issue.projectId}
+            projectWorkspaceId={issue.projectWorkspaceId}
+            isLoading={deliverablesLoading}
+          />
         </TabsContent>
 
         <TabsContent value="activity">

@@ -100,6 +100,15 @@ export type {
   IssueWorkProductReviewState,
 } from "./work-product.js";
 export type {
+  IssueDeliverableSourceType,
+  IssueDeliverableKind,
+  IssueDeliverableItem,
+  IssueDeliverablesRuntimeServiceSummary,
+  IssueDeliverablesWorkspaceSummary,
+  IssueDeliverablesSummary,
+  IssueDeliverablesResponse,
+} from "./issue-deliverables.js";
+export type {
   Issue,
   IssueAssigneeAdapterOverrides,
   IssueRelation,

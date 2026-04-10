@@ -42,6 +42,7 @@ import {
   issueApprovalService,
   ISSUE_LIST_DEFAULT_LIMIT,
   ISSUE_LIST_MAX_LIMIT,
+  issueDeliverableService,
   issueService,
   clampIssueListLimit,
   documentService,
@@ -313,6 +314,7 @@ export function issueRoutes(
   const issueApprovalsSvc = issueApprovalService(db);
   const executionWorkspacesSvc = executionWorkspaceService(db);
   const workProductsSvc = workProductService(db);
+  const issueDeliverablesSvc = issueDeliverableService(db);
   const documentsSvc = documentService(db);
   const routinesSvc = routineService(db);
   const feedbackExportService = opts?.feedbackExportService;
@@ -2193,6 +2195,18 @@ export function issueRoutes(
     });
 
     res.json(released);
+  });
+
+  router.get("/issues/:id/deliverables", async (req, res) => {
+    const id = req.params.id as string;
+    const issue = await svc.getById(id);
+    if (!issue) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertCompanyAccess(req, issue.companyId);
+    const deliverables = await issueDeliverablesSvc.getForIssue(issue);
+    res.json(deliverables);
   });
 
   router.get("/issues/:id/comments", async (req, res) => {

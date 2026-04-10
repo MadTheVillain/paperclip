@@ -194,6 +194,7 @@ export function IssueDocumentsSection({
 
   const invalidateIssueDocuments = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.detail(issue.id) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.issues.deliverables(issue.id) });
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.documents(issue.id) });
     queryClient.invalidateQueries({
       predicate: (query) =>

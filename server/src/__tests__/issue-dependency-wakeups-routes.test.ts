@@ -45,6 +45,9 @@ vi.mock("../services/index.js", () => ({
     listCompanyIds: vi.fn(),
   }),
   issueApprovalService: () => ({}),
+  issueDeliverableService: () => ({
+    getForIssue: vi.fn(async () => null),
+  }),
   issueService: () => mockIssueService,
   logActivity: vi.fn(async () => undefined),
   projectService: () => ({

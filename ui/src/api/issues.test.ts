@@ -23,4 +23,10 @@ describe("issuesApi.list", () => {
       "/companies/company-1/issues?parentId=issue-parent-1&limit=25",
     );
   });
+
+  it("calls the deliverables endpoint for an issue", async () => {
+    await issuesApi.getDeliverables("issue-1");
+
+    expect(mockApi.get).toHaveBeenCalledWith("/issues/issue-1/deliverables");
+  });
 });
