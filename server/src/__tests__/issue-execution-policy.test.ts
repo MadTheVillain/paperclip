@@ -214,6 +214,37 @@ describe("issue execution policy transitions", () => {
       });
     });
 
+    it("rejects non-participants trying to advance the active stage", () => {
+      const reviewStageId = policy.stages[0].id;
+
+      expect(() =>
+        applyIssueExecutionPolicyTransition({
+          issue: {
+            status: "in_review",
+            assigneeAgentId: qaAgentId,
+            assigneeUserId: null,
+            executionPolicy: policy,
+            executionState: {
+              status: "pending",
+              currentStageId: reviewStageId,
+              currentStageIndex: 0,
+              currentStageType: "review",
+              currentParticipant: { type: "agent", agentId: qaAgentId },
+              returnAssignee: { type: "agent", agentId: coderAgentId },
+              completedStageIds: [],
+              lastDecisionId: null,
+              lastDecisionOutcome: null,
+            },
+          },
+          policy,
+          requestedStatus: "done",
+          requestedAssigneePatch: {},
+          actor: { userId: ctoUserId },
+          commentBody: "I'm not the reviewer.",
+        }),
+      ).toThrow("Only the active review or approval participant can advance this execution stage");
+    });
+
     it("approver approves → marks completed (allows done)", () => {
       const reviewStageId = policy.stages[0].id;
       const approvalStageId = policy.stages[1].id;
@@ -413,45 +444,33 @@ describe("issue execution policy transitions", () => {
     const policy = twoStagePolicy();
     const reviewStageId = policy.stages[0].id;
 
-    it("non-participant stage updates are coerced back to the active stage", () => {
-      const result = applyIssueExecutionPolicyTransition({
-        issue: {
-          status: "in_review",
-          assigneeAgentId: qaAgentId,
-          assigneeUserId: null,
-          executionPolicy: policy,
-          executionState: {
-            status: "pending",
-            currentStageId: reviewStageId,
-            currentStageIndex: 0,
-            currentStageType: "review",
-            currentParticipant: { type: "agent", agentId: qaAgentId },
-            returnAssignee: { type: "agent", agentId: coderAgentId },
-            completedStageIds: [],
-            lastDecisionId: null,
-            lastDecisionOutcome: null,
+    it("rejects non-participant stage updates when the issue is already locked to the active stage", () => {
+      expect(() =>
+        applyIssueExecutionPolicyTransition({
+          issue: {
+            status: "in_review",
+            assigneeAgentId: qaAgentId,
+            assigneeUserId: null,
+            executionPolicy: policy,
+            executionState: {
+              status: "pending",
+              currentStageId: reviewStageId,
+              currentStageIndex: 0,
+              currentStageType: "review",
+              currentParticipant: { type: "agent", agentId: qaAgentId },
+              returnAssignee: { type: "agent", agentId: coderAgentId },
+              completedStageIds: [],
+              lastDecisionId: null,
+              lastDecisionOutcome: null,
+            },
           },
-        },
-        policy,
-        requestedStatus: "done",
-        requestedAssigneePatch: { assigneeUserId: boardUserId },
-        actor: { agentId: coderAgentId },
-        commentBody: "Trying to bypass review",
-      });
-
-      expect(result.patch).toMatchObject({
-        status: "in_review",
-        assigneeAgentId: qaAgentId,
-        assigneeUserId: null,
-        executionState: {
-          status: "pending",
-          currentStageId: reviewStageId,
-          currentStageType: "review",
-          currentParticipant: { type: "agent", agentId: qaAgentId },
-          returnAssignee: { type: "agent", agentId: coderAgentId },
-        },
-      });
-      expect(result.decision).toBeUndefined();
+          policy,
+          requestedStatus: "done",
+          requestedAssigneePatch: { assigneeUserId: boardUserId },
+          actor: { agentId: coderAgentId },
+          commentBody: "Trying to bypass review",
+        }),
+      ).toThrow("Only the active review or approval participant can advance this execution stage");
     });
 
     it("non-participant can still post non-advancing updates", () => {

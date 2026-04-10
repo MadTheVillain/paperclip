@@ -393,6 +393,35 @@ export function applyIssueExecutionPolicyTransition(input: TransitionInput): Tra
       }
     }
 
+    const stageStateIsCanonical =
+      input.issue.status === "in_review" &&
+      principalsEqual(currentAssignee, currentParticipant) &&
+      principalsEqual(existingState?.currentParticipant ?? null, currentParticipant);
+
+    if (!stageStateIsCanonical) {
+      buildPendingStagePatch({
+        patch,
+        previous: existingState,
+        policy: input.policy,
+        stage: activeStage,
+        participant: currentParticipant,
+        returnAssignee: existingState?.returnAssignee ?? currentAssignee ?? actor,
+      });
+      return {
+        patch,
+        workflowControlledAssignment: true,
+      };
+    }
+
+    if (!principalsEqual(currentParticipant, actor)) {
+      if (requestedStatus !== undefined && requestedStatus !== "in_review") {
+        throw unprocessable("Only the active review or approval participant can advance this execution stage");
+      }
+      if (requestedAssigneePatchProvided && !principalsEqual(explicitAssignee, currentParticipant)) {
+        throw unprocessable("Assignment during review is controlled by the active execution stage participant");
+      }
+    }
+
     if (
       input.issue.status !== "in_review" ||
       !principalsEqual(currentAssignee, currentParticipant) ||
