@@ -29,14 +29,13 @@ function createSelectChain(rows: unknown[]) {
   };
 }
 
-function createDbStub(inviteRows: unknown[], companyRows: unknown[], logoRows: unknown[]) {
+function createDbStub(...selectResponses: unknown[][]) {
   let selectCall = 0;
   return {
     select() {
+      const rows = selectResponses[selectCall] ?? [];
       selectCall += 1;
-      if (selectCall === 1) return createSelectChain(inviteRows);
-      if (selectCall === 2) return createSelectChain(companyRows);
-      return createSelectChain(logoRows);
+      return createSelectChain(rows);
     },
   };
 }
@@ -84,18 +83,22 @@ describe("GET /invites/:token", () => {
     const app = createApp(
       createDbStub(
         [invite],
-        [{
-          name: "Acme Robotics",
-          brandColor: "#114488",
-          logoAssetId: "logo-1",
-        }],
-        [{
-          companyId: "company-1",
-          objectKey: "company-1/assets/companies/logo-1",
-          contentType: "image/png",
-          byteSize: 3,
-          originalFilename: "logo.png",
-        }],
+        [
+          {
+            name: "Acme Robotics",
+            brandColor: "#114488",
+            logoAssetId: "logo-1",
+          },
+        ],
+        [
+          {
+            companyId: "company-1",
+            objectKey: "company-1/assets/companies/logo-1",
+            contentType: "image/png",
+            byteSize: 3,
+            originalFilename: "logo.png",
+          },
+        ],
       ),
     );
 
@@ -129,18 +132,22 @@ describe("GET /invites/:token", () => {
     const app = createApp(
       createDbStub(
         [invite],
-        [{
-          name: "Acme Robotics",
-          brandColor: "#114488",
-          logoAssetId: "logo-1",
-        }],
-        [{
-          companyId: "company-1",
-          objectKey: "company-1/assets/companies/logo-1",
-          contentType: "image/png",
-          byteSize: 3,
-          originalFilename: "logo.png",
-        }],
+        [
+          {
+            name: "Acme Robotics",
+            brandColor: "#114488",
+            logoAssetId: "logo-1",
+          },
+        ],
+        [
+          {
+            companyId: "company-1",
+            objectKey: "company-1/assets/companies/logo-1",
+            contentType: "image/png",
+            byteSize: 3,
+            originalFilename: "logo.png",
+          },
+        ],
       ),
     );
 
@@ -148,5 +155,51 @@ describe("GET /invites/:token", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.companyLogoUrl).toBeNull();
+  });
+
+  it("returns pending join-request status for an already-accepted invite", async () => {
+    const invite = {
+      id: "invite-1",
+      companyId: "company-1",
+      inviteType: "company_join",
+      allowedJoinTypes: "human",
+      tokenHash: "hash",
+      defaultsPayload: null,
+      expiresAt: new Date("2027-03-07T00:10:00.000Z"),
+      invitedByUserId: null,
+      revokedAt: null,
+      acceptedAt: new Date("2026-03-07T00:05:00.000Z"),
+      createdAt: new Date("2026-03-07T00:00:00.000Z"),
+      updatedAt: new Date("2026-03-07T00:05:00.000Z"),
+    };
+    const app = createApp(
+      createDbStub(
+        [invite],
+        [{ requestType: "human", status: "pending_approval" }],
+        [
+          {
+            name: "Acme Robotics",
+            brandColor: "#114488",
+            logoAssetId: "logo-1",
+          },
+        ],
+        [
+          {
+            companyId: "company-1",
+            objectKey: "company-1/assets/companies/logo-1",
+            contentType: "image/png",
+            byteSize: 3,
+            originalFilename: "logo.png",
+          },
+        ],
+      ),
+    );
+
+    const res = await request(app).get("/api/invites/pcp_invite_test");
+
+    expect(res.status).toBe(200);
+    expect(res.body.joinRequestStatus).toBe("pending_approval");
+    expect(res.body.joinRequestType).toBe("human");
+    expect(res.body.companyName).toBe("Acme Robotics");
   });
 });

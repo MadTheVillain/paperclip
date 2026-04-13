@@ -119,6 +119,77 @@ function isApprovedHumanJoinPayload(payload: unknown, showsAgentForm: boolean) {
   return status === "approved";
 }
 
+type AwaitingJoinApprovalPanelProps = {
+  companyDisplayName: string;
+  companyLogoUrl: string | null;
+  companyBrandColor: string | null;
+  invitedByUserName: string | null;
+  claimSecret?: string | null;
+  claimApiKeyPath?: string | null;
+  onboardingTextUrl?: string | null;
+};
+
+function AwaitingJoinApprovalPanel({
+  companyDisplayName,
+  companyLogoUrl,
+  companyBrandColor,
+  invitedByUserName,
+  claimSecret = null,
+  claimApiKeyPath = null,
+  onboardingTextUrl = null,
+}: AwaitingJoinApprovalPanelProps) {
+  const approvalUrl = `${window.location.origin}/company/settings/access`;
+  const approverLabel = invitedByUserName ?? "A company admin";
+
+  return (
+    <div className="min-h-screen bg-zinc-950 px-6 py-12 text-zinc-100">
+      <div className="mx-auto max-w-md border border-zinc-800 bg-zinc-950 p-6" data-testid="invite-pending-approval">
+        <div className="flex items-center gap-3">
+          <CompanyPatternIcon
+            companyName={companyDisplayName}
+            logoUrl={companyLogoUrl}
+            brandColor={companyBrandColor}
+            className="h-12 w-12 border border-zinc-800 rounded-none"
+          />
+          <h1 className="text-lg font-semibold">Request to join {companyDisplayName}</h1>
+        </div>
+        <div className="mt-4 space-y-3">
+          <p className="text-sm text-zinc-400">
+            Your request is still awaiting approval. {approverLabel} must approve your request to join.
+          </p>
+          <div className="border border-zinc-800 p-3">
+            <p className="text-xs text-zinc-500 mb-1">Approval page</p>
+            <a
+              href={approvalUrl}
+              className="text-sm text-zinc-200 underline underline-offset-2 hover:text-zinc-100"
+            >
+              Company Settings → Access
+            </a>
+          </div>
+          <p className="text-sm text-zinc-400">
+            Ask them to visit <a href={approvalUrl} className="text-zinc-200 underline underline-offset-2 hover:text-zinc-100">Company Settings → Access</a> to approve your request.
+          </p>
+          <p className="text-xs text-zinc-500">
+            Refresh this page after you've been approved — you'll be redirected automatically.
+          </p>
+        </div>
+        {claimSecret && claimApiKeyPath ? (
+          <div className="mt-4 space-y-1 border border-zinc-800 p-3 text-xs text-zinc-400">
+            <div className="text-zinc-200">Claim secret</div>
+            <div className="font-mono break-all">{claimSecret}</div>
+            <div className="font-mono break-all">POST {claimApiKeyPath}</div>
+          </div>
+        ) : null}
+        {onboardingTextUrl ? (
+          <div className="mt-4 text-xs text-zinc-400">
+            Onboarding: <span className="font-mono break-all">{onboardingTextUrl}</span>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 export function InviteLandingPage() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -197,6 +268,8 @@ export function InviteLandingPage() {
   const invitedByUserName = invite?.invitedByUserName?.trim() || null;
   const inviteMessage = invite?.inviteMessage?.trim() || null;
   const requestedHumanRole = formatHumanRole(invite?.humanRole);
+  const inviteJoinRequestStatus = invite?.joinRequestStatus ?? null;
+  const inviteJoinRequestType = invite?.joinRequestType ?? null;
   const requiresHumanAccount =
     healthQuery.data?.deploymentMode === "authenticated" &&
     !sessionQuery.data &&
@@ -206,6 +279,7 @@ export function InviteLandingPage() {
     Boolean(sessionQuery.data) &&
     !showsAgentForm &&
     invite?.inviteType !== "bootstrap_ceo" &&
+    !inviteJoinRequestStatus &&
     !isCheckingExistingMembership &&
     !isCurrentMember &&
     !result &&
@@ -347,6 +421,40 @@ export function InviteLandingPage() {
     );
   }
 
+  if (
+    inviteJoinRequestStatus === "approved" &&
+    inviteJoinRequestType === "human" &&
+    isCurrentMember
+  ) {
+    return <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">Opening company...</div>;
+  }
+
+  if (inviteJoinRequestStatus === "pending_approval") {
+    return (
+      <AwaitingJoinApprovalPanel
+        companyDisplayName={companyDisplayName}
+        companyLogoUrl={companyLogoUrl}
+        companyBrandColor={companyBrandColor}
+        invitedByUserName={invitedByUserName}
+      />
+    );
+  }
+
+  if (inviteJoinRequestStatus) {
+    return (
+      <div className="mx-auto max-w-xl py-10">
+        <div className="border border-border bg-card p-6" data-testid="invite-error">
+          <h1 className="text-lg font-semibold">Invite not available</h1>
+          <p className="mt-2 text-sm text-muted-foreground">
+            {inviteJoinRequestStatus === "rejected"
+              ? "This join request was not approved."
+              : "This invite has already been used."}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   if (result?.kind === "bootstrap") {
     return (
       <div className="min-h-screen bg-zinc-950 px-6 py-12 text-zinc-100">
@@ -372,65 +480,38 @@ export function InviteLandingPage() {
     const claimApiKeyPath = typeof payload.claimApiKeyPath === "string" ? payload.claimApiKeyPath : null;
     const onboardingTextUrl = readNestedString(payload.onboarding, ["textInstructions", "url"]);
     const joinedNow = !showsAgentForm && payload.status === "approved";
-    const approvalUrl = `${window.location.origin}/company/settings/access`;
-    const approverLabel = invitedByUserName ?? "A company admin";
 
     return (
-      <div className="min-h-screen bg-zinc-950 px-6 py-12 text-zinc-100">
-        <div className="mx-auto max-w-md border border-zinc-800 bg-zinc-950 p-6">
-          <div className="flex items-center gap-3">
-            <CompanyPatternIcon
-              companyName={companyDisplayName}
-              logoUrl={companyLogoUrl}
-              brandColor={companyBrandColor}
-              className="h-12 w-12 border border-zinc-800 rounded-none"
-            />
-            <h1 className="text-lg font-semibold">
-              {joinedNow ? "You joined the company" : `Request to join ${companyDisplayName}`}
-            </h1>
-          </div>
-          {joinedNow ? (
+      joinedNow ? (
+        <div className="min-h-screen bg-zinc-950 px-6 py-12 text-zinc-100">
+          <div className="mx-auto max-w-md border border-zinc-800 bg-zinc-950 p-6">
+            <div className="flex items-center gap-3">
+              <CompanyPatternIcon
+                companyName={companyDisplayName}
+                logoUrl={companyLogoUrl}
+                brandColor={companyBrandColor}
+                className="h-12 w-12 border border-zinc-800 rounded-none"
+              />
+              <h1 className="text-lg font-semibold">You joined the company</h1>
+            </div>
             <div className="mt-4">
               <Button asChild className="w-full rounded-none">
                 <Link to="/">Open board</Link>
               </Button>
             </div>
-          ) : (
-            <div className="mt-4 space-y-3">
-              <p className="text-sm text-zinc-400">
-                {approverLabel} must approve your request to join.
-              </p>
-              <div className="border border-zinc-800 p-3">
-                <p className="text-xs text-zinc-500 mb-1">Approval page</p>
-                <a
-                  href={approvalUrl}
-                  className="text-sm text-zinc-200 underline underline-offset-2 hover:text-zinc-100"
-                >
-                  Company Settings → Access
-                </a>
-              </div>
-              <p className="text-sm text-zinc-400">
-                Ask them to visit <a href={approvalUrl} className="text-zinc-200 underline underline-offset-2 hover:text-zinc-100">Company Settings → Access</a> to approve your request.
-              </p>
-              <p className="text-xs text-zinc-500">
-                Refresh this page after you've been approved — you'll be redirected automatically.
-              </p>
-            </div>
-          )}
-          {claimSecret && claimApiKeyPath ? (
-            <div className="mt-4 space-y-1 border border-zinc-800 p-3 text-xs text-zinc-400">
-              <div className="text-zinc-200">Claim secret</div>
-              <div className="font-mono break-all">{claimSecret}</div>
-              <div className="font-mono break-all">POST {claimApiKeyPath}</div>
-            </div>
-          ) : null}
-          {onboardingTextUrl ? (
-            <div className="mt-4 text-xs text-zinc-400">
-              Onboarding: <span className="font-mono break-all">{onboardingTextUrl}</span>
-            </div>
-          ) : null}
+          </div>
         </div>
-      </div>
+      ) : (
+        <AwaitingJoinApprovalPanel
+          companyDisplayName={companyDisplayName}
+          companyLogoUrl={companyLogoUrl}
+          companyBrandColor={companyBrandColor}
+          invitedByUserName={invitedByUserName}
+          claimSecret={claimSecret}
+          claimApiKeyPath={claimApiKeyPath}
+          onboardingTextUrl={onboardingTextUrl}
+        />
+      )
     );
   }
 

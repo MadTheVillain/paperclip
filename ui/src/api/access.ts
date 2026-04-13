@@ -21,6 +21,8 @@ type InviteSummary = {
   skillIndexUrl?: string;
   inviteMessage?: string | null;
   invitedByUserName?: string | null;
+  joinRequestStatus?: JoinRequest["status"] | null;
+  joinRequestType?: JoinRequest["requestType"] | null;
 };
 
 type AcceptInviteInput =

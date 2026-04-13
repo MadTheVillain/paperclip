@@ -2529,11 +2529,21 @@ export function accessRoutes(
       .from(invites)
       .where(eq(invites.tokenHash, hashToken(token)))
       .then((rows) => rows[0] ?? null);
+    const inviteJoinRequest = invite?.acceptedAt
+      ? await db
+          .select({
+            requestType: joinRequests.requestType,
+            status: joinRequests.status,
+          })
+          .from(joinRequests)
+          .where(eq(joinRequests.inviteId, invite.id))
+          .then((rows) => rows[0] ?? null)
+      : null;
     if (
       !invite ||
       invite.revokedAt ||
-      invite.acceptedAt ||
-      inviteExpired(invite)
+      inviteExpired(invite) ||
+      (invite.acceptedAt && !inviteJoinRequest)
     ) {
       throw notFound("Invite not found");
     }
@@ -2547,6 +2557,8 @@ export function accessRoutes(
     res.json({
       ...toInviteSummaryResponse(req, token, invite, companyBranding),
       invitedByUserName: inviterName,
+      joinRequestStatus: inviteJoinRequest?.status ?? null,
+      joinRequestType: inviteJoinRequest?.requestType ?? null,
     });
   });
 
