@@ -2350,7 +2350,10 @@ export function issueService(db: Db) {
       return [...resolved];
     },
 
-    findMentionedProjectIds: async (issueId: string) => {
+    findMentionedProjectIds: async (
+      issueId: string,
+      opts?: { includeCommentBodies?: boolean },
+    ) => {
       const issue = await db
         .select({
           companyId: issues.companyId,
@@ -2362,21 +2365,26 @@ export function issueService(db: Db) {
         .then((rows) => rows[0] ?? null);
       if (!issue) return [];
 
-      const comments = await db
-        .select({ body: issueComments.body })
-        .from(issueComments)
-        .where(eq(issueComments.issueId, issueId));
-
       const mentionedIds = new Set<string>();
-      for (const source of [
-        issue.title,
-        issue.description ?? "",
-        ...comments.map((comment) => comment.body),
-      ]) {
+      for (const source of [issue.title, issue.description ?? ""]) {
         for (const projectId of extractProjectMentionIds(source)) {
           mentionedIds.add(projectId);
         }
       }
+
+      if (opts?.includeCommentBodies !== false) {
+        const comments = await db
+          .select({ body: issueComments.body })
+          .from(issueComments)
+          .where(eq(issueComments.issueId, issueId));
+
+        for (const comment of comments) {
+          for (const projectId of extractProjectMentionIds(comment.body)) {
+            mentionedIds.add(projectId);
+          }
+        }
+      }
+
       if (mentionedIds.size === 0) return [];
 
       const rows = await db
