@@ -12,6 +12,7 @@ import {
   issueWorkProducts,
   workspaceOperations,
 } from "@paperclipai/db";
+import { ISSUE_CONTINUATION_SUMMARY_DOCUMENT_KEY } from "@paperclipai/shared";
 import { classifyRunLiveness } from "./run-liveness.js";
 
 export interface ActivityFilters {
@@ -213,6 +214,7 @@ export function activityService(db: Db) {
             eq(documentRevisions.createdByRunId, run.id),
             eq(issueDocuments.companyId, companyId),
             eq(issueDocuments.issueId, issueId),
+            sql`${issueDocuments.key} != ${ISSUE_CONTINUATION_SUMMARY_DOCUMENT_KEY}`,
           ),
         );
 

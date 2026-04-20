@@ -4,6 +4,7 @@ import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
 import { and, asc, desc, eq, getTableColumns, gt, inArray, isNull, or, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
+import { ISSUE_CONTINUATION_SUMMARY_DOCUMENT_KEY } from "@paperclipai/shared";
 import type { BillingType, ExecutionWorkspace, ExecutionWorkspaceConfig, RunLivenessState } from "@paperclipai/shared";
 import {
   agents,
@@ -3078,6 +3079,7 @@ export function heartbeatService(db: Db) {
             eq(documentRevisions.createdByRunId, run.id),
             eq(issueDocuments.companyId, run.companyId),
             eq(issueDocuments.issueId, contextIssueId),
+            sql`${issueDocuments.key} != ${ISSUE_CONTINUATION_SUMMARY_DOCUMENT_KEY}`,
           ),
         )
       : [{ count: 0, planCount: 0, latestAt: null }];

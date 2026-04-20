@@ -8,6 +8,8 @@ export const DEFAULT_MAX_LIVENESS_CONTINUATION_ATTEMPTS = 2;
 
 const ACTIONABLE_LIVENESS_STATES = new Set<RunLivenessState>(["plan_only", "empty_response"]);
 const CONTINUATION_ACTIVE_ISSUE_STATUSES = new Set(["todo", "in_progress"]);
+// A prior adapter error should not permanently suppress bounded liveness
+// continuations; the max-attempt/idempotency guards prevent unbounded retries.
 const CONTINUATION_AGENT_STATUSES = new Set(["active", "idle", "running", "error"]);
 const IDEMPOTENT_WAKE_STATUSES = ["queued", "deferred_issue_execution", "completed"];
 

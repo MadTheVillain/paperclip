@@ -11,6 +11,7 @@ import {
   issueDocuments,
   issues,
 } from "@paperclipai/db";
+import { ISSUE_CONTINUATION_SUMMARY_DOCUMENT_KEY } from "@paperclipai/shared";
 import {
   getEmbeddedPostgresTestSupport,
   startEmbeddedPostgresTestDatabase,
@@ -336,6 +337,107 @@ describeEmbeddedPostgres("activity service", () => {
       issueId,
       documentId,
       key: "plan",
+      createdAt,
+      updatedAt: createdAt,
+    });
+
+    const runs = await activityService(db).runsForIssue(companyId, issueId);
+    const backfilledRun = runs.find((run) => run.runId === runId);
+
+    expect(backfilledRun).toMatchObject({
+      runId,
+      livenessState: "plan_only",
+      livenessReason: "Run described future work without concrete action evidence",
+      lastUsefulActionAt: null,
+    });
+  });
+
+  it("does not treat continuation summary revisions as concrete backfill evidence", async () => {
+    const companyId = randomUUID();
+    const agentId = randomUUID();
+    const issueId = randomUUID();
+    const runId = randomUUID();
+    const documentId = randomUUID();
+    const revisionId = randomUUID();
+    const createdAt = new Date("2026-04-18T20:12:00.000Z");
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(agents).values({
+      id: agentId,
+      companyId,
+      name: "CodexCoder",
+      role: "engineer",
+      status: "idle",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Fix run ledger",
+      description: "Make the run ledger answer whether a run advanced.",
+      status: "in_progress",
+      priority: "medium",
+      assigneeAgentId: agentId,
+    });
+
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      companyId,
+      agentId,
+      invocationSource: "assignment",
+      status: "succeeded",
+      startedAt: new Date("2026-04-18T20:10:00.000Z"),
+      finishedAt: createdAt,
+      contextSnapshot: { issueId },
+      resultJson: {
+        summary: "Next steps:\n- inspect files",
+      },
+      livenessState: null,
+      livenessReason: null,
+    });
+
+    await db.insert(documents).values({
+      id: documentId,
+      companyId,
+      title: "Continuation Summary",
+      format: "markdown",
+      latestBody: "# Continuation Summary",
+      latestRevisionId: revisionId,
+      latestRevisionNumber: 1,
+      createdByAgentId: agentId,
+      updatedByAgentId: agentId,
+      createdAt,
+      updatedAt: createdAt,
+    });
+
+    await db.insert(documentRevisions).values({
+      id: revisionId,
+      companyId,
+      documentId,
+      revisionNumber: 1,
+      title: "Continuation Summary",
+      format: "markdown",
+      body: "# Continuation Summary",
+      createdByAgentId: agentId,
+      createdByRunId: runId,
+      createdAt,
+    });
+
+    await db.insert(issueDocuments).values({
+      companyId,
+      issueId,
+      documentId,
+      key: ISSUE_CONTINUATION_SUMMARY_DOCUMENT_KEY,
       createdAt,
       updatedAt: createdAt,
     });

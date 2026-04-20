@@ -255,4 +255,17 @@ describe("IssueRunLedger", () => {
     expect(nextAction?.className).toContain("break-words");
     expect(container.textContent).toContain("Next action:");
   });
+
+  it("shows when older runs are clipped from the ledger", () => {
+    renderLedger({
+      runs: Array.from({ length: 10 }, (_, index) =>
+        createRun({
+          runId: `run-${index.toString().padStart(8, "0")}`,
+          createdAt: `2026-04-18T19:${String(index).padStart(2, "0")}:00.000Z`,
+        }),
+      ),
+    });
+
+    expect(container.textContent).toContain("2 older runs not shown");
+  });
 });

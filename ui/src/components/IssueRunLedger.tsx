@@ -428,6 +428,11 @@ export function IssueRunLedgerContent({
               </article>
             );
           })}
+          {ledgerRuns.length > 8 ? (
+            <div className="px-3 py-2 text-xs text-muted-foreground">
+              {ledgerRuns.length - 8} older runs not shown
+            </div>
+          ) : null}
         </div>
       )}
     </section>
