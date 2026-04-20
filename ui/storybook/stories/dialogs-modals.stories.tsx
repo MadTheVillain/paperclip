@@ -16,6 +16,7 @@ import { NewGoalDialog } from "@/components/NewGoalDialog";
 import { NewIssueDialog } from "@/components/NewIssueDialog";
 import { NewProjectDialog } from "@/components/NewProjectDialog";
 import { PathInstructionsModal } from "@/components/PathInstructionsModal";
+import { useCompany } from "@/context/CompanyContext";
 import { useDialog } from "@/context/DialogContext";
 import { queryKeys } from "@/lib/queryKeys";
 import {
@@ -467,13 +468,19 @@ function clickButtonByText(text: string) {
   button?.click();
 }
 
-function useOpenOnMount(open: () => void) {
+function useOpenWhenCompanyReady(open: () => void) {
+  const { selectedCompanyId, setSelectedCompanyId } = useCompany();
   const didOpenRef = useRef(false);
+
   useLayoutEffect(() => {
+    if (selectedCompanyId !== COMPANY_ID) {
+      setSelectedCompanyId(COMPANY_ID);
+      return;
+    }
     if (didOpenRef.current) return;
     didOpenRef.current = true;
     open();
-  }, [open]);
+  }, [open, selectedCompanyId, setSelectedCompanyId]);
 }
 
 function IssueDialogOpener({
@@ -484,7 +491,7 @@ function IssueDialogOpener({
   const { openNewIssue } = useDialog();
   useIssueCreateErrorMock(variant === "validation");
 
-  useOpenOnMount(() => {
+  useOpenWhenCompanyReady(() => {
     openNewIssue(
       variant === "empty"
         ? {}
@@ -521,7 +528,7 @@ function IssueDialogOpener({
 function AgentDialogOpener({ advanced }: { advanced?: boolean }) {
   const { openNewAgent } = useDialog();
 
-  useOpenOnMount(() => {
+  useOpenWhenCompanyReady(() => {
     openNewAgent();
   });
 
@@ -539,7 +546,7 @@ function AgentDialogOpener({ advanced }: { advanced?: boolean }) {
 function GoalDialogOpener({ populated }: { populated?: boolean }) {
   const { openNewGoal } = useDialog();
 
-  useOpenOnMount(() => {
+  useOpenWhenCompanyReady(() => {
     openNewGoal(populated ? { parentId: "goal-company" } : {});
   });
 
@@ -557,7 +564,7 @@ function GoalDialogOpener({ populated }: { populated?: boolean }) {
 function ProjectDialogOpener({ populated }: { populated?: boolean }) {
   const { openNewProject } = useDialog();
 
-  useOpenOnMount(() => {
+  useOpenWhenCompanyReady(() => {
     openNewProject();
   });
 
