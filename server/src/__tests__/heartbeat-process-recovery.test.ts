@@ -794,7 +794,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
 
     const retryRun = await waitForValue(async () => {
       const rows = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.agentId, agentId));
-      return rows.find((row) => row.id !== runId && row.status !== "queued" && row.status !== "running") ?? null;
+      return rows.find((row) => row.id !== runId && row.livenessState === "advanced") ?? null;
     });
     expect(retryRun?.livenessState).toBe("advanced");
 
