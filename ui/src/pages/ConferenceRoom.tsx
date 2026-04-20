@@ -313,7 +313,7 @@ export function ConferenceRoom() {
 
   return (
     <TooltipProvider>
-      <div className="flex h-[calc(100vh-8.5rem)] min-h-[560px] w-full max-w-5xl flex-col overflow-hidden">
+      <div className="flex min-h-[calc(100vh-8.5rem)] w-full max-w-5xl flex-col">
         <div className="mb-3 flex h-11 shrink-0 items-center justify-between border-b border-border/80 bg-background">
           <div className="flex min-w-0 items-center gap-2">
             <span className="flex h-8 w-8 items-center justify-center rounded-md border border-border bg-muted/60">
@@ -341,7 +341,7 @@ export function ConferenceRoom() {
         </div>
 
         {isHistoryRoute ? (
-          <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="flex-1">
             <div className="divide-y divide-border">
               {chats.length === 0 ? (
                 <div className="flex min-h-[360px] items-center justify-center text-sm text-muted-foreground">
@@ -379,7 +379,7 @@ export function ConferenceRoom() {
             Chat not found.
           </div>
         ) : showChat ? (
-          <div className={cn("min-h-0 flex-1 overflow-y-auto", issueLoading && "opacity-70")}>
+          <div className={cn("flex-1", issueLoading && "opacity-70")}>
             <IssueChatThread
               composerRef={composerRef}
               comments={threadComments}
