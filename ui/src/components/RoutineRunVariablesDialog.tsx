@@ -28,6 +28,8 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 
+const WORKSPACE_BRANCH_ROUTINE_VARIABLE = "workspaceBranch";
+
 function buildInitialValues(variables: RoutineVariable[]) {
   return Object.fromEntries(variables.map((variable) => [variable.name, variable.defaultValue ?? ""]));
 }
@@ -189,6 +191,7 @@ export function RoutineRunVariablesDialog({
     : null;
   const [workspaceConfig, setWorkspaceConfig] = useState(() => buildInitialWorkspaceConfig(selectedProject));
   const [workspaceConfigValid, setWorkspaceConfigValid] = useState(true);
+  const [workspaceBranchName, setWorkspaceBranchName] = useState<string | null>(null);
 
   const { data: experimentalSettings } = useQuery({
     queryKey: queryKeys.instance.experimentalSettings,
@@ -208,15 +211,27 @@ export function RoutineRunVariablesDialog({
     setSelection(nextSelection);
     setWorkspaceConfig(buildInitialWorkspaceConfig(projects.find((project) => project.id === nextSelection.projectId) ?? null));
     setWorkspaceConfigValid(true);
+    setWorkspaceBranchName(null);
   }, [defaultAssigneeAgentId, defaultProjectId, open, projects, variables]);
+
+  const workspaceBranchAutoValue = workspaceSelectionEnabled && workspaceBranchName
+    ? workspaceBranchName
+    : null;
+
+  const isAutoWorkspaceBranchVariable = useCallback(
+    (variable: RoutineVariable) =>
+      variable.name === WORKSPACE_BRANCH_ROUTINE_VARIABLE && Boolean(workspaceBranchAutoValue),
+    [workspaceBranchAutoValue],
+  );
 
   const missingRequired = useMemo(
     () =>
       variables
         .filter((variable) => variable.required)
+        .filter((variable) => !isAutoWorkspaceBranchVariable(variable))
         .filter((variable) => isMissingRequiredValue(values[variable.name]))
         .map((variable) => variable.label || variable.name),
-    [values, variables],
+    [isAutoWorkspaceBranchVariable, values, variables],
   );
 
   const workspaceIssue = useMemo(() => ({
@@ -247,10 +262,14 @@ export function RoutineRunVariablesDialog({
 
   const handleWorkspaceDraftChange = useCallback((
     data: Record<string, unknown>,
-    meta: { canSave: boolean },
+    meta: { canSave: boolean; workspaceBranchName?: string | null },
   ) => {
     setWorkspaceConfig((current) => applyWorkspaceDraft(current, data));
     setWorkspaceConfigValid((current) => (current === meta.canSave ? current : meta.canSave));
+    setWorkspaceBranchName((current) => {
+      const next = meta.workspaceBranchName ?? null;
+      return current === next ? current : next;
+    });
   }, []);
 
   return (
@@ -328,6 +347,7 @@ export function RoutineRunVariablesDialog({
                   setSelection((current) => ({ ...current, projectId }));
                   setWorkspaceConfig(buildInitialWorkspaceConfig(project));
                   setWorkspaceConfigValid(true);
+                  setWorkspaceBranchName(null);
                 }}
                 renderTriggerValue={(option) =>
                   option && selectedProject ? (
@@ -365,7 +385,13 @@ export function RoutineRunVariablesDialog({
                 {variable.label || variable.name}
                 {variable.required ? " *" : ""}
               </Label>
-              {variable.type === "textarea" ? (
+              {isAutoWorkspaceBranchVariable(variable) ? (
+                <Input
+                  readOnly
+                  disabled
+                  value={workspaceBranchAutoValue ?? ""}
+                />
+              ) : variable.type === "textarea" ? (
                 <Textarea
                   rows={4}
                   value={typeof values[variable.name] === "string" ? values[variable.name] as string : ""}
@@ -450,6 +476,10 @@ export function RoutineRunVariablesDialog({
             onClick={() => {
               const nextVariables: Record<string, string | number | boolean> = {};
               for (const variable of variables) {
+                if (isAutoWorkspaceBranchVariable(variable)) {
+                  nextVariables[variable.name] = workspaceBranchAutoValue!;
+                  continue;
+                }
                 const rawValue = values[variable.name];
                 if (isMissingRequiredValue(rawValue)) continue;
                 if (variable.type === "number") {
