@@ -85,6 +85,15 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
 import { formatIssueActivityAction } from "@/lib/activity-format";
 import { buildIssuePropertiesPanelKey } from "../lib/issue-properties-panel-key";
 import { shouldRenderRichSubIssuesSection } from "../lib/issue-detail-subissues";
@@ -102,11 +111,14 @@ import {
   MessageSquare,
   MoreHorizontal,
   MoreVertical,
+  PauseCircle,
   Paperclip,
+  PlayCircle,
   Plus,
   Repeat,
   SlidersHorizontal,
   Trash2,
+  XCircle,
 } from "lucide-react";
 import {
   getClosedIsolatedExecutionWorkspaceMessage,
@@ -122,6 +134,7 @@ import {
   type IssueThreadInteraction,
   type RequestConfirmationInteraction,
   type SuggestTasksInteraction,
+  type IssueTreeControlMode,
 } from "@paperclipai/shared";
 
 type CommentReassignment = IssueCommentReassignment;
@@ -136,6 +149,49 @@ type IssueDetailComment = (IssueComment | OptimisticIssueComment) & {
 
 const FEEDBACK_TERMS_URL = import.meta.env.VITE_FEEDBACK_TERMS_URL?.trim() || "https://paperclip.ing/tos";
 const ISSUE_COMMENT_PAGE_SIZE = 50;
+const TREE_CONTROL_MODE_LABEL: Record<IssueTreeControlMode, string> = {
+  pause: "Pause subtree",
+  resume: "Resume subtree",
+  cancel: "Cancel subtree",
+  restore: "Restore subtree",
+};
+const TREE_CONTROL_MODE_HELP_TEXT: Record<IssueTreeControlMode, string> = {
+  pause: "Pause active execution in this issue subtree and hold descendant execution until release.",
+  resume: "Release the active subtree pause hold so held work can continue.",
+  cancel: "Cancel active subtree work and stop queued/running work where possible.",
+  restore: "Restore cancelled issues in the subtree so work can resume.",
+};
+const TREE_CONTROL_STRATEGY_OPTIONS = [
+  { value: "manual", label: "Manual release" },
+  { value: "after_active_runs_finish", label: "Release after active runs finish" },
+] as const;
+const TREE_CONTROL_PAUSE_VARIANTS = [
+  {
+    value: "course_correction",
+    label: "Course-correction pause",
+    description: "Hold descendants while the root can still run for planner follow-up.",
+  },
+  {
+    value: "full_pause",
+    label: "Full subtree pause",
+    description: "Stop root and descendant execution until an explicit resume action.",
+  },
+] as const;
+type TreeControlPauseVariant = (typeof TREE_CONTROL_PAUSE_VARIANTS)[number]["value"];
+
+function parsePauseVariantFromNote(note: string | null | undefined): TreeControlPauseVariant {
+  const normalized = note?.trim().toLowerCase();
+  return normalized === "course_correction" ? "course_correction" : "full_pause";
+}
+
+function treeControlPreviewErrorCopy(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.status === 403) return "Only board users can preview subtree controls.";
+    if (error.status === 409) return "Preview is stale because subtree hold state changed. Retry to refresh.";
+    if (error.status === 422) return "This subtree action is currently invalid for the selected issues.";
+  }
+  return error instanceof Error ? error.message : "Unable to load preview.";
+}
 
 function resolveRunningIssueRun(
   activeRun: ActiveRunForIssue | null | undefined,
@@ -532,6 +588,7 @@ type IssueDetailChatTabProps = {
   suggestedAssigneeValue: string;
   mentions: MentionOption[];
   composerDisabledReason: string | null;
+  composerHint: string | null;
   onVote: (
     commentId: string,
     vote: "up" | "down",
@@ -582,6 +639,7 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
   suggestedAssigneeValue,
   mentions,
   composerDisabledReason,
+  composerHint,
   onVote,
   onAdd,
   onImageUpload,
@@ -746,6 +804,7 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
         suggestedAssigneeValue={suggestedAssigneeValue}
         mentions={mentions}
         composerDisabledReason={composerDisabledReason}
+        composerHint={composerHint}
         onVote={onVote}
         onAdd={onAdd}
         imageUploadHandler={onImageUpload}
@@ -974,6 +1033,15 @@ export function IssueDetail() {
   const [attachmentDragActive, setAttachmentDragActive] = useState(false);
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [galleryIndex, setGalleryIndex] = useState(0);
+  const [treeControlOpen, setTreeControlOpen] = useState(false);
+  const [treeControlMode, setTreeControlMode] = useState<IssueTreeControlMode>("pause");
+  const [treeControlReason, setTreeControlReason] = useState("");
+  const [treeControlPauseVariant, setTreeControlPauseVariant] = useState<TreeControlPauseVariant>("full_pause");
+  const [treeControlWakeAgentsOnResume, setTreeControlWakeAgentsOnResume] = useState(false);
+  const [treeControlCancelConfirmed, setTreeControlCancelConfirmed] = useState(false);
+  const [treeControlReleaseStrategy, setTreeControlReleaseStrategy] = useState<"manual" | "after_active_runs_finish">(
+    "manual",
+  );
   const [optimisticComments, setOptimisticComments] = useState<OptimisticIssueComment[]>([]);
   const [locallyQueuedCommentRunIds, setLocallyQueuedCommentRunIds] = useState<Map<string, string>>(() => new Map());
   const [pendingCommentComposerFocusKey, setPendingCommentComposerFocusKey] = useState(0);
@@ -1113,6 +1181,16 @@ export function IssueDetail() {
     enabled: !!selectedCompanyId,
   });
   const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
+  const { data: boardAccess } = useQuery({
+    queryKey: queryKeys.access.currentBoardAccess,
+    queryFn: () => accessApi.getCurrentBoardAccess(),
+    enabled: !!session?.user?.id,
+    retry: false,
+  });
+  const canManageTreeControl = Boolean(
+    selectedCompanyId
+    && boardAccess?.companyIds?.includes(selectedCompanyId),
+  );
   const { data: feedbackVotes } = useQuery({
     queryKey: queryKeys.issues.feedbackVotes(issueId!),
     queryFn: () => issuesApi.listFeedbackVotes(issueId!),
@@ -1146,6 +1224,47 @@ export function IssueDetail() {
     [issuePluginDetailSlots],
   );
   const activePluginTab = issuePluginTabItems.find((item) => item.value === detailTab) ?? null;
+  const {
+    data: treeControlPreview,
+    isFetching: treeControlPreviewLoading,
+    error: treeControlPreviewError,
+    refetch: refetchTreeControlPreview,
+  } = useQuery({
+    queryKey: [
+      "issues",
+      "tree-control-preview",
+      issueId ?? "pending",
+      treeControlMode,
+      treeControlReleaseStrategy,
+      treeControlPauseVariant,
+    ],
+    queryFn: () =>
+      issuesApi.previewTreeControl(issueId!, {
+        mode: treeControlMode,
+        releasePolicy: {
+          strategy: treeControlReleaseStrategy,
+        },
+      }),
+    enabled: treeControlOpen && !!issueId && canManageTreeControl,
+    staleTime: 0,
+    retry: false,
+  });
+  const { data: treeControlState } = useQuery({
+    queryKey: ["issues", "tree-control-state", issueId ?? "pending"],
+    queryFn: () => issuesApi.getTreeControlState(issueId!),
+    enabled: !!issueId && canManageTreeControl,
+    retry: false,
+  });
+  const { data: activeRootPauseHolds = [] } = useQuery({
+    queryKey: ["issues", "tree-holds", issueId ?? "pending", "active-pause-with-members"],
+    queryFn: () =>
+      issuesApi.listTreeHolds(issueId!, {
+        status: "active",
+        mode: "pause",
+        includeMembers: true,
+      }),
+    enabled: !!issueId && treeControlState?.activePauseHold?.isRoot === true,
+  });
 
   const agentMap = useMemo(() => {
     const map = new Map<string, Agent>();
@@ -1382,6 +1501,62 @@ export function IssueDetail() {
       if (selectedCompanyId) {
         queryClient.invalidateQueries({ queryKey: queryKeys.issues.list(selectedCompanyId) });
       }
+    },
+  });
+  const executeTreeControl = useMutation({
+    mutationFn: async () => {
+      if (treeControlMode === "resume") {
+        const pauseHoldId = treeControlState?.activePauseHold?.holdId;
+        if (!pauseHoldId) {
+          throw new Error("No active subtree pause hold is available to resume.");
+        }
+        const releasedHold = await issuesApi.releaseTreeHold(issueId!, pauseHoldId, {
+          reason: treeControlReason.trim() || null,
+          metadata: {
+            wakeAgents: treeControlWakeAgentsOnResume,
+          },
+        });
+        return { kind: "release" as const, hold: releasedHold };
+      }
+      const created = await issuesApi.createTreeHold(issueId!, {
+        mode: treeControlMode,
+        reason: treeControlReason.trim() || null,
+        releasePolicy: {
+          strategy: treeControlReleaseStrategy,
+          ...(treeControlMode === "pause"
+            ? { note: treeControlPauseVariant }
+            : {}),
+        },
+      });
+      return { kind: "create" as const, hold: created.hold, preview: created.preview };
+    },
+    onSuccess: async (result) => {
+      const modeLabel = TREE_CONTROL_MODE_LABEL[result.hold.mode];
+      const cancelCount = result.preview?.totals.activeRuns ?? 0;
+      const pauseModeText = treeControlPauseVariant === "course_correction" ? "Course-correction pause enabled." : "Full subtree pause enabled.";
+      pushToast({
+        title: result.hold.mode === "pause" ? "Subtree paused" : `${modeLabel} applied`,
+        body: result.hold.mode === "pause"
+          ? `${pauseModeText} ${cancelCount} run${cancelCount === 1 ? "" : "s"} cancelled.`
+          : result.hold.reason?.trim()
+            ? result.hold.reason
+            : `Control applied with ${result.hold.releasePolicy?.strategy ?? "manual"} release policy.`,
+      });
+      setTreeControlOpen(false);
+      setTreeControlReason("");
+      setTreeControlWakeAgentsOnResume(false);
+      setTreeControlCancelConfirmed(false);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.issues.detail(issueId!) });
+      if (selectedCompanyId) {
+        await queryClient.invalidateQueries({ queryKey: queryKeys.issues.list(selectedCompanyId) });
+      }
+    },
+    onError: (err) => {
+      pushToast({
+        title: "Unable to apply subtree control",
+        body: err instanceof Error ? err.message : "Please try again.",
+        tone: "error",
+      });
     },
   });
   const handleIssuePropertiesUpdate = useCallback((data: Record<string, unknown>) => {
@@ -2408,6 +2583,70 @@ export function IssueDetail() {
   };
 
   const hasAttachments = attachmentList.length > 0;
+  const treePreviewAffectedIssues = useMemo(
+    () => (treeControlPreview?.issues ?? []).filter((candidate) => !candidate.skipped),
+    [treeControlPreview],
+  );
+  const treePreviewWarnings = treeControlPreview?.warnings ?? [];
+  const activePauseHold = treeControlState?.activePauseHold ?? null;
+  const heldIssueIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const hold of activeRootPauseHolds) {
+      for (const member of hold.members ?? []) {
+        ids.add(member.issueId);
+      }
+    }
+    return ids;
+  }, [activeRootPauseHolds]);
+  const mutedChildIssueIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const child of childIssues) {
+      if (heldIssueIds.has(child.id)) ids.add(child.id);
+    }
+    return ids;
+  }, [childIssues, heldIssueIds]);
+  const childPauseBadgeById = useMemo(() => {
+    const badges = new Map<string, string>();
+    for (const child of childIssues) {
+      if (!heldIssueIds.has(child.id)) continue;
+      badges.set(child.id, "Paused");
+    }
+    return badges;
+  }, [childIssues, heldIssueIds]);
+  const activePauseHoldRoot = useMemo(() => {
+    if (!activePauseHold) return null;
+    if (activePauseHold.rootIssueId === issue?.id) return issue ?? null;
+    return issue?.ancestors?.find((ancestor) => ancestor.id === activePauseHold.rootIssueId) ?? null;
+  }, [activePauseHold, issue]);
+  const activeRootPauseHold = useMemo(
+    () => activeRootPauseHolds.find((hold) => hold.id === activePauseHold?.holdId) ?? null,
+    [activePauseHold?.holdId, activeRootPauseHolds],
+  );
+  const activePauseVariant = parsePauseVariantFromNote(
+    activeRootPauseHold?.releasePolicy?.note ?? activePauseHold?.releasePolicy?.note,
+  );
+  const heldDescendantCount = Math.max(heldIssueIds.size - 1, 0);
+  const canShowSubtreeControls = canManageTreeControl && childIssues.length > 0;
+  const canResumeSubtree = canShowSubtreeControls && activePauseHold?.isRoot === true;
+  const previewTerminalSkippedCount = treeControlPreview?.skippedIssues.filter((candidate) => candidate.skipReason === "terminal_status").length ?? 0;
+  const previewAffectedAgentCount = treeControlPreview?.totals.affectedAgents ?? 0;
+  const treeControlPrimaryButtonLabel =
+    treeControlMode === "pause"
+      ? "Pause and stop work"
+      : treeControlMode === "cancel"
+        ? `Cancel ${treeControlPreview?.totals.affectedIssues ?? 0} issues`
+        : treeControlMode === "restore"
+          ? "Restore subtree"
+          : "Resume subtree";
+  const deferredComposerHint =
+    activePauseHold && !activePauseHold.isRoot && activePauseVariant === "course_correction"
+      ? "Will be delivered when the subtree resumes."
+      : null;
+  const canApplyTreeControl =
+    Boolean(treeControlPreview)
+    && !treeControlPreviewLoading
+    && (treeControlMode !== "cancel" || (treeControlReason.trim().length > 0 && treeControlCancelConfirmed))
+    && (treeControlMode !== "resume" || !treeControlWakeAgentsOnResume || previewAffectedAgentCount > 0);
   const attachmentUploadButton = (
     <>
       <input
@@ -2471,6 +2710,74 @@ export function IssueDetail() {
         <div className="flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
           <EyeOff className="h-4 w-4 shrink-0" />
           This issue is hidden
+        </div>
+      )}
+      {activePauseHold && (
+        <div className="rounded-md border border-amber-500/35 bg-amber-500/10 p-3 text-sm text-amber-800 dark:text-amber-200">
+          {activePauseHold.isRoot ? (
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-medium">Subtree pause is active.</span>
+                <span className="text-xs text-amber-900/80 dark:text-amber-100/80">
+                  {activePauseVariant === "course_correction"
+                    ? "Course-correction mode keeps descendants held while root planning can continue."
+                    : "Full pause mode holds the full subtree until resume."}
+                </span>
+              </div>
+              <div className="text-xs text-amber-900/80 dark:text-amber-100/80">
+                {heldDescendantCount} descendant{heldDescendantCount === 1 ? "" : "s"} held
+                {activeRootPauseHold?.createdAt ? ` · started ${relativeTime(activeRootPauseHold.createdAt)}` : ""}
+              </div>
+              {canShowSubtreeControls ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      setTreeControlMode("resume");
+                      setTreeControlWakeAgentsOnResume(false);
+                      setTreeControlOpen(true);
+                    }}
+                  >
+                    Resume subtree
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setTreeControlMode("resume");
+                      setTreeControlOpen(true);
+                    }}
+                  >
+                    View affected ({heldDescendantCount})
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-destructive hover:text-destructive"
+                    onClick={() => {
+                      setTreeControlMode("cancel");
+                      setTreeControlCancelConfirmed(false);
+                      setTreeControlOpen(true);
+                    }}
+                  >
+                    Cancel subtree...
+                  </Button>
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <div className="text-xs">
+              This issue is paused by ancestor{" "}
+              {activePauseHoldRoot?.identifier ? (
+                <Link to={createIssueDetailPath(activePauseHoldRoot.identifier)} className="underline">
+                  {activePauseHoldRoot.identifier}
+                </Link>
+              ) : (
+                activePauseHold.rootIssueId.slice(0, 8)
+              )}
+              . Resume from the root issue to deliver deferred work.
+            </div>
+          )}
         </div>
       )}
 
@@ -2605,7 +2912,49 @@ export function IssueDetail() {
                   <MoreHorizontal className="h-4 w-4" />
                 </Button>
               </PopoverTrigger>
-            <PopoverContent className="w-44 p-1" align="end">
+            <PopoverContent className="w-52 p-1" align="end">
+              {canShowSubtreeControls ? (
+                <>
+                  <button
+                    className="flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50"
+                    onClick={() => {
+                      setTreeControlMode("pause");
+                      setTreeControlCancelConfirmed(false);
+                      setTreeControlOpen(true);
+                      setMoreOpen(false);
+                    }}
+                  >
+                    <PauseCircle className="h-3 w-3" />
+                    Pause subtree...
+                  </button>
+                  {canResumeSubtree ? (
+                    <button
+                      className="flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50"
+                      onClick={() => {
+                        setTreeControlMode("resume");
+                        setTreeControlWakeAgentsOnResume(false);
+                        setTreeControlOpen(true);
+                        setMoreOpen(false);
+                      }}
+                    >
+                      <PlayCircle className="h-3 w-3" />
+                      Resume subtree
+                    </button>
+                  ) : null}
+                  <button
+                    className="flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 text-destructive"
+                    onClick={() => {
+                      setTreeControlMode("cancel");
+                      setTreeControlCancelConfirmed(false);
+                      setTreeControlOpen(true);
+                      setMoreOpen(false);
+                    }}
+                  >
+                    <XCircle className="h-3 w-3" />
+                    Cancel subtree...
+                  </button>
+                </>
+              ) : null}
               <button
                 className="flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 text-destructive"
                 onClick={() => {
@@ -2701,6 +3050,8 @@ export function IssueDetail() {
             agents={agents}
             projects={projects}
             liveIssueIds={liveIssueIds}
+            mutedIssueIds={mutedChildIssueIds}
+            issueBadgeById={childPauseBadgeById}
             projectId={issue.projectId ?? undefined}
             viewStateKey={`paperclip:issue-detail:${issue.id}:subissues-view`}
             issueLinkState={resolvedIssueDetailState ?? location.state}
@@ -2940,6 +3291,7 @@ export function IssueDetail() {
               suggestedAssigneeValue={suggestedAssigneeValue}
               mentions={mentionOptions}
               composerDisabledReason={commentComposerDisabledReason}
+              composerHint={deferredComposerHint}
               onVote={handleCommentVote}
               onAdd={handleChatAdd}
               onImageUpload={handleCommentImageUpload}
@@ -2993,6 +3345,204 @@ export function IssueDetail() {
           </TabsContent>
         )}
       </Tabs>
+
+      <Dialog open={treeControlOpen} onOpenChange={setTreeControlOpen}>
+        <DialogContent className="sm:max-w-[560px]">
+          <DialogHeader>
+            <DialogTitle>{TREE_CONTROL_MODE_LABEL[treeControlMode]}</DialogTitle>
+            <DialogDescription>
+              {TREE_CONTROL_MODE_HELP_TEXT[treeControlMode]}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            {treeControlMode === "cancel" ? (
+              <div className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
+                Cancelling a subtree is destructive. Running and queued work will be interrupted where possible.
+              </div>
+            ) : null}
+
+            {treeControlMode === "pause" ? (
+              <div className="space-y-2">
+                <p className="text-xs font-medium text-muted-foreground">Pause mode</p>
+                {TREE_CONTROL_PAUSE_VARIANTS.map((variant) => (
+                  <label
+                    key={variant.value}
+                    className={cn(
+                      "flex cursor-pointer items-start gap-2 rounded-md border p-2 text-sm",
+                      treeControlPauseVariant === variant.value ? "border-primary bg-primary/5" : "border-border",
+                    )}
+                  >
+                    <input
+                      type="radio"
+                      className="mt-0.5"
+                      checked={treeControlPauseVariant === variant.value}
+                      onChange={() => setTreeControlPauseVariant(variant.value)}
+                    />
+                    <span>
+                      <span className="block font-medium">{variant.label}</span>
+                      <span className="text-xs text-muted-foreground">{variant.description}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            ) : null}
+
+            <div className="space-y-1.5">
+              <label className="text-xs text-muted-foreground">
+                {treeControlMode === "cancel" ? "Reason (required)" : "Reason (optional)"}
+              </label>
+              <Textarea
+                value={treeControlReason}
+                onChange={(event) => setTreeControlReason(event.target.value)}
+                placeholder="Explain why this subtree control is being applied..."
+                className="min-h-[88px]"
+              />
+            </div>
+
+            {(treeControlMode === "resume" || treeControlMode === "restore") ? (
+              <label className="flex items-start gap-2 rounded-md border border-border bg-muted/20 p-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  disabled={previewAffectedAgentCount === 0}
+                  checked={treeControlWakeAgentsOnResume}
+                  onChange={(event) => setTreeControlWakeAgentsOnResume(event.target.checked)}
+                />
+                <span>
+                  <span className="block font-medium">Wake affected agents ({previewAffectedAgentCount})</span>
+                  <span className="text-xs text-muted-foreground">
+                    {previewAffectedAgentCount === 0
+                      ? "No assigned agents are eligible to wake from this preview."
+                      : "Unchecked by default. Resume does not wake agents unless explicitly enabled."}
+                  </span>
+                </span>
+              </label>
+            ) : null}
+
+            {(treeControlMode === "pause" || treeControlMode === "resume") ? (
+              <div className="space-y-1.5">
+                <label className="text-xs text-muted-foreground">Release policy</label>
+                <select
+                  value={treeControlReleaseStrategy}
+                  onChange={(event) => setTreeControlReleaseStrategy(event.target.value as "manual" | "after_active_runs_finish")}
+                  className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                >
+                  {TREE_CONTROL_STRATEGY_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
+
+            {treeControlMode === "cancel" ? (
+              <label className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={treeControlCancelConfirmed}
+                  onChange={(event) => setTreeControlCancelConfirmed(event.target.checked)}
+                />
+                <span>I understand this will cancel {treeControlPreview?.totals.affectedIssues ?? 0} issues.</span>
+              </label>
+            ) : null}
+
+            <div className="rounded-md border border-border bg-muted/20 p-3">
+              {treeControlPreviewLoading ? (
+                <div className="space-y-2">
+                  <Skeleton className="h-4 w-40" />
+                  <Skeleton className="h-3 w-full" />
+                  <Skeleton className="h-3 w-4/5" />
+                  <Skeleton className="h-3 w-2/3" />
+                </div>
+              ) : treeControlPreviewError ? (
+                <div className="space-y-2">
+                  <p className="text-xs text-destructive">{treeControlPreviewErrorCopy(treeControlPreviewError)}</p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      void refetchTreeControlPreview();
+                    }}
+                  >
+                    Retry preview
+                  </Button>
+                </div>
+              ) : treeControlPreview ? (
+                <div className="mt-2 space-y-2">
+                  <div className="grid grid-cols-1 gap-1 text-xs text-muted-foreground sm:grid-cols-2">
+                    <span>Descendants held: {Math.max(treeControlPreview.totals.affectedIssues - 1, 0)}</span>
+                    <span>Active runs cancelled: {treeControlPreview.totals.activeRuns}</span>
+                    <span>Queued runs dropped: {treeControlPreview.totals.queuedRuns}</span>
+                    <span>Agents affected: {treeControlPreview.totals.affectedAgents}</span>
+                    <span>Terminal issues skipped: {previewTerminalSkippedCount}</span>
+                  </div>
+                  {treePreviewWarnings.length > 0 ? (
+                    <div className="space-y-1">
+                      {treePreviewWarnings.map((warning) => (
+                        <p key={warning.code} className="text-xs text-amber-700 dark:text-amber-300">
+                          {warning.message}
+                        </p>
+                      ))}
+                    </div>
+                  ) : null}
+                  {treeControlPreview.countsByStatus ? (
+                    <details className="rounded border border-border/60 bg-background p-2 text-xs text-muted-foreground">
+                      <summary className="cursor-pointer font-medium text-foreground">Status breakdown</summary>
+                      <div className="mt-2 grid grid-cols-2 gap-1">
+                        {Object.entries(treeControlPreview.countsByStatus).map(([status, count]) => (
+                          <span key={status}>{status.replaceAll("_", " ")}: {count ?? 0}</span>
+                        ))}
+                      </div>
+                    </details>
+                  ) : null}
+                  {treeControlPreview.affectedAgents.length > 0 ? (
+                    <details className="rounded border border-border/60 bg-background p-2 text-xs text-muted-foreground">
+                      <summary className="cursor-pointer font-medium text-foreground">Affected agents ({treeControlPreview.affectedAgents.length})</summary>
+                      <div className="mt-2 space-y-1">
+                        {treeControlPreview.affectedAgents.map((agent) => (
+                          <div key={agent.agentId} className="flex items-center justify-between gap-2">
+                            <span>{agentMap.get(agent.agentId)?.name ?? agent.agentId.slice(0, 8)}</span>
+                            <span>{agent.issueCount} issues · {agent.activeRunCount} active runs</span>
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  ) : null}
+                  {treePreviewAffectedIssues.length > 0 ? (
+                    <div className="max-h-40 space-y-1 overflow-y-auto rounded border border-border/70 bg-background p-2">
+                      {treePreviewAffectedIssues.slice(0, 20).map((candidate) => (
+                        <div key={candidate.id} className="flex items-center justify-between gap-2 text-xs">
+                          <span className="truncate">
+                            {candidate.identifier ? `${candidate.identifier} ` : ""}
+                            {candidate.title}
+                          </span>
+                          <span className="text-muted-foreground">{candidate.status}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">Preview unavailable.</p>
+              )}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setTreeControlOpen(false)} disabled={executeTreeControl.isPending}>
+              Close
+            </Button>
+            <Button
+              onClick={() => executeTreeControl.mutate()}
+              disabled={executeTreeControl.isPending || !canApplyTreeControl}
+              variant={treeControlMode === "cancel" ? "destructive" : "default"}
+            >
+              {executeTreeControl.isPending ? "Applying..." : treeControlPrimaryButtonLabel}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Mobile properties drawer */}
       <Sheet open={mobilePropsOpen} onOpenChange={setMobilePropsOpen}>
