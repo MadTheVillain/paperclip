@@ -140,6 +140,25 @@ describeEmbeddedPostgres("memory job routes", () => {
     });
   });
 
+  it("rejects ambiguous status and effective-state filters", async () => {
+    const companyId = randomUUID();
+    await insertCompany(db, companyId);
+
+    const app = createApp(db, {
+      type: "board",
+      userId: "board",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+    });
+
+    const res = await request(app).get(
+      `/api/companies/${companyId}/memory/jobs?status=succeeded&effectiveState=stuck`,
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("effectiveState and status cannot be used together");
+  });
+
   it("returns job detail scoped to the requested company", async () => {
     const companyId = randomUUID();
     const jobId = randomUUID();

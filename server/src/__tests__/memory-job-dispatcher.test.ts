@@ -30,6 +30,23 @@ async function insertCompany(db: ReturnType<typeof createDb>, companyId: string)
   });
 }
 
+async function waitForJobStatus(
+  store: ReturnType<typeof memoryJobStore>,
+  companyId: string,
+  jobId: string,
+  status: string,
+  now: Date,
+) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const detail = await store.getDetail(companyId, jobId, { now });
+    if (detail?.status === status) {
+      return detail;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  return store.getDetail(companyId, jobId, { now });
+}
+
 describeEmbeddedPostgres("memory job dispatcher", () => {
   let db!: ReturnType<typeof createDb>;
   let tempDb: Awaited<ReturnType<typeof startMemoryJobTestDatabase>> | null = null;
@@ -83,7 +100,7 @@ describeEmbeddedPostgres("memory job dispatcher", () => {
 
     await dispatcher.tick();
 
-    const detail = await store.getDetail(companyId, queued.id, { now: currentTime });
+    const detail = await waitForJobStatus(store, companyId, queued.id, "succeeded", currentTime);
 
     expect(detail).toMatchObject({
       id: queued.id,
@@ -132,7 +149,7 @@ describeEmbeddedPostgres("memory job dispatcher", () => {
 
     await dispatcher.tick();
 
-    const runningDetail = await store.getDetail(companyId, queued.id, { now: currentTime });
+    const runningDetail = await waitForJobStatus(store, companyId, queued.id, "running", currentTime);
     expect(runningDetail).toMatchObject({
       id: queued.id,
       status: "running",

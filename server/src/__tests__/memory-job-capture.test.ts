@@ -35,6 +35,22 @@ async function insertCompany(db: ReturnType<typeof createDb>, companyId: string)
   });
 }
 
+async function waitForJobStatus(
+  store: ReturnType<typeof memoryJobStore>,
+  companyId: string,
+  jobId: string,
+  status: string,
+) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const detail = await store.getDetail(companyId, jobId);
+    if (detail?.status === status) {
+      return detail;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  return store.getDetail(companyId, jobId);
+}
+
 describeEmbeddedPostgres("memory job capture", () => {
   let db!: ReturnType<typeof createDb>;
   let tempDb: Awaited<ReturnType<typeof startMemoryJobTestDatabase>> | null = null;
@@ -193,7 +209,7 @@ describeEmbeddedPostgres("memory job capture", () => {
 
     await dispatcher.tick();
 
-    const completed = await store.getDetail(companyId, queued.id);
+    const completed = await waitForJobStatus(store, companyId, queued.id, "succeeded");
     expect(completed).toMatchObject({
       id: queued.id,
       status: "succeeded",

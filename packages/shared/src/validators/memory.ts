@@ -40,6 +40,13 @@ export const listMemoryExtractionJobsQuerySchema = z
   })
   .strict()
   .superRefine((value, ctx) => {
+    if (value.status && value.effectiveState) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["effectiveState"],
+        message: "effectiveState and status cannot be used together",
+      });
+    }
     if (value.submittedAfter && value.submittedBefore && value.submittedAfter > value.submittedBefore) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,

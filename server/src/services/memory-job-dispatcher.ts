@@ -58,6 +58,10 @@ export interface MemoryJobDispatcher {
   diagnostics(): MemoryJobDispatcherDiagnostics;
 }
 
+function childLogger(bindings: Record<string, unknown>): typeof logger {
+  return typeof logger.child === "function" ? logger.child(bindings) : logger;
+}
+
 export function createMemoryJobDispatcher(
   options: MemoryJobDispatcherOptions,
 ): MemoryJobDispatcher {
@@ -66,7 +70,7 @@ export function createMemoryJobDispatcher(
   const leaseDurationMs = options.leaseDurationMs ?? DEFAULT_LEASE_DURATION_MS;
   const maxConcurrentJobs = options.maxConcurrentJobs ?? DEFAULT_MAX_CONCURRENT_JOBS;
   const now = options.now ?? (() => new Date());
-  const log = logger.child({ service: "memory_job_dispatcher" });
+  const log = childLogger({ service: "memory_job_dispatcher" });
 
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let recoveryTimer: ReturnType<typeof setInterval> | null = null;
@@ -81,12 +85,12 @@ export function createMemoryJobDispatcher(
   const activeJobs = new Set<string>();
 
   async function runClaimedJob(job: ClaimedMemoryJob): Promise<void> {
-    const jobLog = log.child({
+    const jobLog = typeof log.child === "function" ? log.child({
       jobId: job.id,
       companyId: job.companyId,
       bindingKey: job.bindingKey,
       operationType: job.operationType,
-    });
+    }) : log;
 
     try {
       const handler = await options.resolveHandler(job);
@@ -185,8 +189,6 @@ export function createMemoryJobDispatcher(
     tickCount += 1;
     lastTickAt = now();
 
-    const dispatches: Promise<void>[] = [];
-
     try {
       while (activeJobs.size < maxConcurrentJobs) {
         const claimed = await options.store.claimNext({
@@ -200,11 +202,7 @@ export function createMemoryJobDispatcher(
         }
 
         activeJobs.add(claimed.id);
-        dispatches.push(runClaimedJob(claimed));
-      }
-
-      if (dispatches.length > 0) {
-        await Promise.allSettled(dispatches);
+        void runClaimedJob(claimed);
       }
     } catch (error) {
       log.error(

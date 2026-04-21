@@ -144,6 +144,32 @@ vi.mock("../services/index.js", () => ({
   })),
 }));
 
+vi.mock("../services/memory-job-capture.js", () => ({
+  createPostRunMemoryCaptureHandler: vi.fn(() => vi.fn()),
+}));
+
+vi.mock("../services/memory-job-dispatcher.js", () => ({
+  createMemoryJobDispatcher: vi.fn(() => ({
+    start: vi.fn(),
+    stop: vi.fn(),
+    tick: vi.fn(async () => undefined),
+    sweepExpiredLeases: vi.fn(async () => ({ recovered: 0, jobIds: [] })),
+    diagnostics: vi.fn(() => ({
+      running: false,
+      activeJobCount: 0,
+      activeJobIds: [],
+      tickCount: 0,
+      lastTickAt: null,
+      recoveryCount: 0,
+      lastRecoveryAt: null,
+    })),
+  })),
+}));
+
+vi.mock("../services/memory-job-store.js", () => ({
+  memoryJobStore: vi.fn(() => ({})),
+}));
+
 vi.mock("../storage/index.js", () => ({
   createStorageServiceFromConfig: vi.fn(() => ({ id: "storage-service" })),
 }));

@@ -10704,7 +10704,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
+          "onDelete": "cascade",
           "onUpdate": "no action"
         },
         "memory_extraction_jobs_source_agent_id_agents_id_fk": {
@@ -10717,7 +10717,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
+          "onDelete": "set null",
           "onUpdate": "no action"
         },
         "memory_extraction_jobs_source_issue_id_issues_id_fk": {
@@ -10730,7 +10730,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
+          "onDelete": "set null",
           "onUpdate": "no action"
         },
         "memory_extraction_jobs_source_project_id_projects_id_fk": {
@@ -10743,7 +10743,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
+          "onDelete": "set null",
           "onUpdate": "no action"
         },
         "memory_extraction_jobs_source_goal_id_goals_id_fk": {
@@ -10756,7 +10756,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
+          "onDelete": "set null",
           "onUpdate": "no action"
         },
         "memory_extraction_jobs_source_heartbeat_run_id_heartbeat_runs_id_fk": {
@@ -10769,7 +10769,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
+          "onDelete": "set null",
           "onUpdate": "no action"
         },
         "memory_extraction_jobs_retry_of_job_id_memory_extraction_jobs_id_fk": {
