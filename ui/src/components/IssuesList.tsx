@@ -177,6 +177,15 @@ function sortIssues(issues: Issue[], state: IssueViewState): Issue[] {
   return sorted;
 }
 
+function issueMatchesLocalSearch(issue: Issue, normalizedSearch: string): boolean {
+  if (!normalizedSearch) return true;
+  return [
+    issue.identifier,
+    issue.title,
+    issue.description,
+  ].some((value) => value?.toLowerCase().includes(normalizedSearch));
+}
+
 /* ── Component ── */
 
 interface Agent {
@@ -208,6 +217,7 @@ interface IssuesListProps {
   initialWorkspaces?: string[];
   initialSearch?: string;
   searchFilters?: Omit<IssueListRequestFilters, "q" | "projectId" | "limit" | "includeRoutineExecutions">;
+  searchWithinLoadedIssues?: boolean;
   baseCreateIssueDefaults?: Record<string, unknown>;
   createIssueLabel?: string;
   enableRoutineVisibilityFilter?: boolean;
@@ -293,6 +303,7 @@ export function IssuesList({
   initialWorkspaces,
   initialSearch,
   searchFilters,
+  searchWithinLoadedIssues = false,
   baseCreateIssueDefaults,
   createIssueLabel,
   enableRoutineVisibilityFilter = false,
@@ -393,7 +404,7 @@ export function IssuesList({
         ...searchFilters,
         ...(enableRoutineVisibilityFilter ? { includeRoutineExecutions: true } : {}),
       }),
-    enabled: !!selectedCompanyId && normalizedIssueSearch.length > 0,
+    enabled: !!selectedCompanyId && normalizedIssueSearch.length > 0 && !searchWithinLoadedIssues,
     placeholderData: (previousData) => previousData,
   });
   const boardIssueQueries = useQueries({
@@ -417,7 +428,7 @@ export function IssuesList({
           limit: ISSUE_BOARD_COLUMN_RESULT_LIMIT,
           ...(enableRoutineVisibilityFilter ? { includeRoutineExecutions: true } : {}),
         }),
-      enabled: !!selectedCompanyId && viewState.viewMode === "board",
+      enabled: !!selectedCompanyId && viewState.viewMode === "board" && !searchWithinLoadedIssues,
       placeholderData: (previousData: Issue[] | undefined) => previousData,
     })),
   });
@@ -598,7 +609,7 @@ export function IssuesList({
   }, [issues]);
 
   const boardIssues = useMemo(() => {
-    if (viewState.viewMode !== "board") return null;
+    if (viewState.viewMode !== "board" || searchWithinLoadedIssues) return null;
     const merged = new Map<string, Issue>();
     let isPending = false;
     for (const query of boardIssueQueries) {
@@ -609,13 +620,17 @@ export function IssuesList({
     }
     if (merged.size > 0) return [...merged.values()];
     return isPending ? issues : [];
-  }, [boardIssueQueries, issues, viewState.viewMode]);
+  }, [boardIssueQueries, issues, searchWithinLoadedIssues, viewState.viewMode]);
 
   const filtered = useMemo(() => {
-    const sourceIssues = boardIssues ?? (normalizedIssueSearch.length > 0 ? searchedIssues : issues);
-    const filteredByControls = applyIssueFilters(sourceIssues, viewState, currentUserId, enableRoutineVisibilityFilter);
+    const useRemoteSearch = normalizedIssueSearch.length > 0 && !searchWithinLoadedIssues;
+    const sourceIssues = boardIssues ?? (useRemoteSearch ? searchedIssues : issues);
+    const searchScopedIssues = normalizedIssueSearch.length > 0 && searchWithinLoadedIssues
+      ? sourceIssues.filter((issue) => issueMatchesLocalSearch(issue, normalizedIssueSearch))
+      : sourceIssues;
+    const filteredByControls = applyIssueFilters(searchScopedIssues, viewState, currentUserId, enableRoutineVisibilityFilter);
     return sortIssues(filteredByControls, viewState);
-  }, [boardIssues, issues, searchedIssues, viewState, normalizedIssueSearch, currentUserId, enableRoutineVisibilityFilter]);
+  }, [boardIssues, issues, searchedIssues, searchWithinLoadedIssues, viewState, normalizedIssueSearch, currentUserId, enableRoutineVisibilityFilter]);
 
   const { data: labels } = useQuery({
     queryKey: queryKeys.issues.labels(selectedCompanyId!),
@@ -913,7 +928,7 @@ export function IssuesList({
 
       {isLoading && <PageSkeleton variant="issues-list" />}
       {error && <p className="text-sm text-destructive">{error.message}</p>}
-      {normalizedIssueSearch.length > 0 && searchedIssues.length === ISSUE_SEARCH_RESULT_LIMIT && (
+      {!searchWithinLoadedIssues && normalizedIssueSearch.length > 0 && searchedIssues.length === ISSUE_SEARCH_RESULT_LIMIT && (
         <p className="text-xs text-muted-foreground">
           Showing up to {ISSUE_SEARCH_RESULT_LIMIT} matches. Refine the search to narrow further.
         </p>
