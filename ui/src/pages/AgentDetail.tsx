@@ -35,6 +35,7 @@ import { agentStatusDot, agentStatusDotDefault } from "../lib/status-colors";
 import { MarkdownBody } from "../components/MarkdownBody";
 import { CopyText } from "../components/CopyText";
 import { EntityRow } from "../components/EntityRow";
+import { PriorityIcon } from "../components/PriorityIcon";
 import { Identity } from "../components/Identity";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { RunButton, PauseResumeButton } from "../components/AgentActionButtons";
@@ -1096,6 +1097,7 @@ export function AgentDetail() {
           runtimeState={runtimeState}
           agentId={agent.id}
           agentRouteId={canonicalAgentRef}
+          budgetSummary={agentBudgetSummary}
         />
       )}
 
@@ -1256,6 +1258,20 @@ function LatestRunCard({ runs, agentId }: { runs: HeartbeatRun[]; agentId: strin
 
 /* ---- Agent Overview (main single-page view) ---- */
 
+const IN_FLIGHT_ISSUE_STATUSES = new Set(["todo", "in_progress", "blocked"]);
+const PRIORITY_SORT_RANK: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+
+const agentStatusLabels: Record<string, string> = {
+  running: "Running",
+  active: "Active",
+  paused: "Paused",
+  idle: "Idle",
+  pending_approval: "Pending approval",
+  error: "Error",
+  terminated: "Terminated",
+  archived: "Archived",
+};
+
 function AgentOverview({
   agent,
   runs,
@@ -1263,20 +1279,115 @@ function AgentOverview({
   runtimeState,
   agentId,
   agentRouteId,
+  budgetSummary,
 }: {
   agent: AgentDetailRecord;
   runs: HeartbeatRun[];
-  assignedIssues: { id: string; title: string; status: string; priority: string; identifier?: string | null; createdAt: Date }[];
+  assignedIssues: { id: string; title: string; status: string; priority: string; identifier?: string | null; createdAt: Date; updatedAt: Date }[];
   runtimeState?: AgentRuntimeState;
   agentId: string;
   agentRouteId: string;
+  budgetSummary?: BudgetPolicySummary;
 }) {
+  const inFlightTasks = useMemo(() => {
+    return assignedIssues
+      .filter((issue) => IN_FLIGHT_ISSUE_STATUSES.has(issue.status))
+      .sort((a, b) => {
+        const rankA = PRIORITY_SORT_RANK[a.priority] ?? 99;
+        const rankB = PRIORITY_SORT_RANK[b.priority] ?? 99;
+        if (rankA !== rankB) return rankA - rankB;
+        return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+      });
+  }, [assignedIssues]);
+
+  const recentRuns = useMemo(() => {
+    return [...runs]
+      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+      .slice(-7);
+  }, [runs]);
+
+  const statusDotClass = agentStatusDot[agent.status] ?? agentStatusDotDefault;
+  const statusLabel = agentStatusLabels[agent.status] ?? agent.status;
+
   return (
     <div className="space-y-8">
-      {/* Latest Run */}
-      <LatestRunCard runs={runs} agentId={agentRouteId} />
+      {/* Hero: two-zone — left "what's happening now" | right "how are we doing" */}
+      <div className="grid grid-cols-1 lg:grid-cols-[55fr_45fr] gap-4">
+        {/* Left zone */}
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <span className={cn("inline-block h-2 w-2 rounded-full shrink-0", statusDotClass)} />
+            <span className="text-xs font-medium text-muted-foreground">{statusLabel}</span>
+          </div>
+          {runs.length > 0 ? (
+            <LatestRunCard runs={runs} agentId={agentRouteId} />
+          ) : (
+            <div className="border border-border rounded-none p-4 text-sm text-muted-foreground">
+              No runs yet.
+            </div>
+          )}
+        </div>
 
-      {/* Charts */}
+        {/* Right zone */}
+        <div className="space-y-3">
+          {/* Budget position (compact stub) */}
+          {budgetSummary && budgetSummary.amount > 0 ? (
+            <div className="border border-border rounded-none p-4 space-y-2">
+              <div className="text-xs text-muted-foreground">Budget — this month</div>
+              <div className="flex items-baseline justify-between tabular-nums">
+                <span className="text-sm font-semibold">
+                  {formatCents(budgetSummary.observedAmount)} of {formatCents(budgetSummary.amount)}
+                </span>
+                <span className="text-xs text-muted-foreground">{budgetSummary.utilizationPercent}%</span>
+              </div>
+              <div className="h-2 bg-muted overflow-hidden rounded-full">
+                <div
+                  className={cn(
+                    "h-full transition-[width] duration-200",
+                    budgetSummary.status === "hard_stop"
+                      ? "bg-red-400"
+                      : budgetSummary.status === "warning"
+                        ? "bg-amber-300"
+                        : "bg-emerald-300",
+                  )}
+                  style={{ width: `${Math.min(100, budgetSummary.utilizationPercent)}%` }}
+                />
+              </div>
+              <div className="text-xs text-muted-foreground tabular-nums">
+                {formatCents(budgetSummary.remainingAmount)} remaining
+              </div>
+            </div>
+          ) : (
+            <div className="border border-border rounded-none p-4 text-sm text-muted-foreground">
+              No budget configured.
+            </div>
+          )}
+
+          {/* Recent runs strip — 7 dots */}
+          <div className="border border-border rounded-none p-4 space-y-2">
+            <div className="text-xs text-muted-foreground">Recent runs — last 7</div>
+            {recentRuns.length === 0 ? (
+              <div className="text-xs text-muted-foreground">No runs yet.</div>
+            ) : (
+              <div className="flex items-center gap-2">
+                {recentRuns.map((run) => {
+                  const tone = runStatusIcons[run.status] ?? { icon: Clock, color: "text-neutral-400" };
+                  return (
+                    <Link
+                      key={run.id}
+                      to={`/agents/${agentRouteId}/runs/${run.id}`}
+                      title={`${run.status} · ${relativeTime(run.createdAt)}`}
+                      className={cn("h-3 w-3 rounded-full no-underline", tone.color.replace(/text-/g, "bg-"))}
+                    />
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Activity over time (chart band — Phase 3b will consolidate to one merged chart) */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <ChartCard title="Run Activity" subtitle="Last 14 days">
           <RunActivityChart runs={runs} />
@@ -1292,33 +1403,34 @@ function AgentOverview({
         </ChartCard>
       </div>
 
-      {/* Recent Issues */}
+      {/* In-flight tasks — filter: status ∈ {todo, in_progress, blocked}; sort: priority DESC, updatedAt DESC; limit 7 */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-medium">Recent Issues</h3>
+          <h3 className="text-sm font-medium">In-flight tasks</h3>
           <Link
             to={`/issues?participantAgentId=${agentId}`}
             className="text-xs text-muted-foreground hover:text-foreground transition-colors"
           >
-            See All &rarr;
+            View all &rarr;
           </Link>
         </div>
-        {assignedIssues.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No recent issues.</p>
+        {inFlightTasks.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No in-flight tasks.</p>
         ) : (
           <div className="border border-border rounded-none">
-            {assignedIssues.slice(0, 10).map((issue) => (
+            {inFlightTasks.slice(0, 7).map((issue) => (
               <EntityRow
                 key={issue.id}
+                leading={<PriorityIcon priority={issue.priority} />}
                 identifier={issue.identifier ?? issue.id.slice(0, 8)}
                 title={issue.title}
                 to={`/issues/${issue.identifier ?? issue.id}`}
                 trailing={<StatusBadge status={issue.status} />}
               />
             ))}
-            {assignedIssues.length > 10 && (
+            {inFlightTasks.length > 7 && (
               <div className="px-3 py-2 text-xs text-muted-foreground text-center border-t border-border">
-                +{assignedIssues.length - 10} more issues
+                +{inFlightTasks.length - 7} more in-flight
               </div>
             )}
           </div>
