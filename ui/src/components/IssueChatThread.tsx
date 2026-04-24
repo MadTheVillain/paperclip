@@ -750,8 +750,7 @@ function IssueChatChainOfThought({
     (p): p is ToolCallMessagePart => p.type === "tool-call",
   );
 
-  const hasActiveTool = toolParts.some((t) => t.result === undefined);
-  const isActive = isMessageRunning && hasActiveTool;
+  const isActive = isMessageRunning;
   const [expanded, setExpanded] = useState(isActive);
 
   const rawSegments = Array.isArray(custom.chainOfThoughtSegments)
