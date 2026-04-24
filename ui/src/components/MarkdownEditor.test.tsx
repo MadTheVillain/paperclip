@@ -299,6 +299,31 @@ describe("MarkdownEditor", () => {
     });
   });
 
+  it("keeps scriptable pasted HTML inert in the rich editor", async () => {
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(
+        <MarkdownEditor
+          value={'<script>fetch("/api/secrets")</script>\n<iframe src="https://example.com"></iframe>\n<p onclick="steal()">Plain text</p>'}
+          onChange={() => {}}
+          placeholder="Markdown body"
+        />,
+      );
+    });
+
+    await flush();
+    expect(mdxEditorMockState.suppressHtmlProcessingValues).toContain(true);
+    expect(container.querySelector("textarea")).toBeNull();
+    expect(container.querySelector("script, iframe, p[onclick]")).toBeNull();
+    expect(container.textContent).toContain('fetch("/api/secrets")');
+    expect(container.textContent).toContain("Plain text");
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
   it("falls back to a raw textarea when the rich parser rejects the markdown", async () => {
     mdxEditorMockState.emitMountParseError = true;
     const handleChange = vi.fn();
