@@ -43,6 +43,21 @@ type CoveredBlockedCell = {
   expectedCopy: string;
 };
 
+function attention(
+  partial: Partial<IssueBlockerAttention> & Pick<IssueBlockerAttention, "state" | "reason">,
+): IssueBlockerAttention {
+  return {
+    state: partial.state,
+    reason: partial.reason,
+    unresolvedBlockerCount: partial.unresolvedBlockerCount ?? 0,
+    coveredBlockerCount: partial.coveredBlockerCount ?? 0,
+    stalledBlockerCount: partial.stalledBlockerCount ?? 0,
+    attentionBlockerCount: partial.attentionBlockerCount ?? 0,
+    sampleBlockerIdentifier: partial.sampleBlockerIdentifier ?? null,
+    sampleStalledBlockerIdentifier: partial.sampleStalledBlockerIdentifier ?? null,
+  };
+}
+
 const coveredBlockedMatrix: CoveredBlockedCell[] = [
   {
     label: "Normal blocked",
@@ -54,98 +69,116 @@ const coveredBlockedMatrix: CoveredBlockedCell[] = [
   {
     label: "Covered by 1 active child",
     status: "blocked",
-    blockerAttention: {
+    blockerAttention: attention({
       state: "covered",
       reason: "active_child",
       unresolvedBlockerCount: 1,
       coveredBlockerCount: 1,
-      attentionBlockerCount: 0,
       sampleBlockerIdentifier: "PAP-2175",
-    },
+    }),
     expectedVisual: "cyan ring",
     expectedCopy: "Blocked · waiting on active sub-issue PAP-2175",
   },
   {
     label: "Covered by N active children",
     status: "blocked",
-    blockerAttention: {
+    blockerAttention: attention({
       state: "covered",
       reason: "active_child",
       unresolvedBlockerCount: 3,
       coveredBlockerCount: 3,
-      attentionBlockerCount: 0,
-      sampleBlockerIdentifier: null,
-    },
+    }),
     expectedVisual: "cyan ring",
     expectedCopy: "Blocked · waiting on 3 active sub-issues",
   },
   {
     label: "Covered by active dependency",
     status: "blocked",
-    blockerAttention: {
+    blockerAttention: attention({
       state: "covered",
       reason: "active_dependency",
       unresolvedBlockerCount: 1,
       coveredBlockerCount: 1,
-      attentionBlockerCount: 0,
       sampleBlockerIdentifier: "PAP-1918",
-    },
+    }),
     expectedVisual: "cyan ring",
     expectedCopy: "Blocked · covered by active dependency PAP-1918",
   },
   {
     label: "Covered by N active dependencies",
     status: "blocked",
-    blockerAttention: {
+    blockerAttention: attention({
       state: "covered",
       reason: "active_dependency",
       unresolvedBlockerCount: 2,
       coveredBlockerCount: 2,
-      attentionBlockerCount: 0,
-      sampleBlockerIdentifier: null,
-    },
+    }),
     expectedVisual: "cyan ring",
     expectedCopy: "Blocked · covered by 2 active dependencies",
   },
   {
+    label: "Stalled review (single leaf)",
+    status: "blocked",
+    blockerAttention: attention({
+      state: "stalled",
+      reason: "stalled_review",
+      unresolvedBlockerCount: 1,
+      stalledBlockerCount: 1,
+      sampleBlockerIdentifier: "PAP-2279",
+      sampleStalledBlockerIdentifier: "PAP-2279",
+    }),
+    expectedVisual: "amber ring with dot",
+    expectedCopy: "Blocked · review stalled on PAP-2279",
+  },
+  {
+    label: "Stalled review (multiple leaves)",
+    status: "blocked",
+    blockerAttention: attention({
+      state: "stalled",
+      reason: "stalled_review",
+      unresolvedBlockerCount: 2,
+      stalledBlockerCount: 2,
+      sampleStalledBlockerIdentifier: "PAP-2279",
+    }),
+    expectedVisual: "amber ring with dot",
+    expectedCopy: "Blocked · 2 reviews stalled with no clear next step",
+  },
+  {
     label: "Mixed: 1 covered, 1 needs attention",
     status: "blocked",
-    blockerAttention: {
+    blockerAttention: attention({
       state: "needs_attention",
       reason: "attention_required",
       unresolvedBlockerCount: 2,
       coveredBlockerCount: 1,
       attentionBlockerCount: 1,
-      sampleBlockerIdentifier: null,
-    },
+    }),
     expectedVisual: "solid red ring",
     expectedCopy: "Blocked · 2 unresolved blockers need attention",
   },
   {
     label: "Needs attention (single blocker)",
     status: "blocked",
-    blockerAttention: {
+    blockerAttention: attention({
       state: "needs_attention",
       reason: "attention_required",
       unresolvedBlockerCount: 1,
-      coveredBlockerCount: 0,
       attentionBlockerCount: 1,
       sampleBlockerIdentifier: "PAP-1042",
-    },
+    }),
     expectedVisual: "solid red ring",
     expectedCopy: "Blocked · 1 unresolved blocker needs attention",
   },
   {
     label: "Non-blocked with prop ignored",
     status: "in_progress",
-    blockerAttention: {
+    blockerAttention: attention({
       state: "covered",
       reason: "active_child",
       unresolvedBlockerCount: 1,
       coveredBlockerCount: 1,
-      attentionBlockerCount: 0,
       sampleBlockerIdentifier: "PAP-2175",
-    },
+    }),
     expectedVisual: "yellow ring",
     expectedCopy: "In Progress",
   },
@@ -248,8 +281,9 @@ function StatusLanguage() {
             ))}
           </div>
           <p className="mt-3 text-xs text-muted-foreground">
-            Tooltip and aria-label copy begin with "Blocked · " for cells 2-7; cells 6 and 7 retain the solid red ring
-            and mention blockers that need attention.
+            Tooltip and aria-label copy begin with "Blocked · " for every cell after the first. Covered cells show a cyan
+            ring with a small dot, stalled-review cells show an amber ring with a centered dot, and the needs-attention
+            cells retain the solid red ring.
           </p>
         </Section>
 

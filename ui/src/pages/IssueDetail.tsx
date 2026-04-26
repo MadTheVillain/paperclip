@@ -549,6 +549,7 @@ type IssueDetailChatTabProps = {
   issueStatus: Issue["status"];
   executionRunId: string | null;
   blockedBy: Issue["blockedBy"];
+  blockerAttention: Issue["blockerAttention"] | null;
   comments: IssueDetailComment[];
   locallyQueuedCommentRunIds: ReadonlyMap<string, string>;
   interactions: IssueThreadInteraction[];
@@ -601,6 +602,7 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
   issueStatus,
   executionRunId,
   blockedBy,
+  blockerAttention,
   comments,
   locallyQueuedCommentRunIds,
   interactions,
@@ -795,6 +797,7 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
         liveRuns={resolvedLiveRuns}
         activeRun={resolvedActiveRun}
         blockedBy={blockedBy ?? []}
+        blockerAttention={blockerAttention}
         companyId={companyId}
         projectId={projectId}
         issueStatus={issueStatus}
@@ -3374,6 +3377,7 @@ export function IssueDetail() {
               issueStatus={issue.status}
               executionRunId={issue.executionRunId ?? null}
               blockedBy={issue.blockedBy ?? []}
+              blockerAttention={issue.blockerAttention ?? null}
               comments={threadComments}
               locallyQueuedCommentRunIds={locallyQueuedCommentRunIds}
               interactions={interactions}
