@@ -288,7 +288,7 @@ const blockedNoticeFixtures: BlockedNoticeFixture[] = [
   },
   {
     label: "Stalled (multiple leaves)",
-    caption: "Multiple stalled reviews — copy switches to the unnamed pluralized variant.",
+    caption: "Multiple stalled reviews — body uses plural agreement (\"reviews\"/\"them\") to match the chip strip.",
     blockers: [
       summaryBlocker({
         id: "issue-stalled-parent-multi-a",
@@ -461,8 +461,8 @@ function StatusLanguage() {
           </div>
           <p className="mt-3 text-xs text-muted-foreground">
             Stalled-state copy switches to "stalled in review without a clear next step" and adds a "Stalled in review"
-            chip strip beneath the regular blocker chips. Single-leaf stalled copy names the leaf identifier; multi-leaf
-            falls back to the unnamed pluralized variant.
+            chip strip beneath the regular blocker chips. The trailing imperative pluralizes when multiple stalled
+            leaves are surfaced ("reviews"/"them") to match the chip strip.
           </p>
         </Section>
 

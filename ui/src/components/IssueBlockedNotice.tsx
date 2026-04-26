@@ -69,7 +69,9 @@ export function IssueBlockedNotice({
           <p className="leading-5">
             {blockers.length > 0
               ? isStalled
-                ? <>Work on this issue is blocked by {blockerLabel}, but the chain is stalled in review without a clear next step. Resolve the stalled review below or remove it as a blocker.</>
+                ? stalledLeafBlockers.length > 1
+                  ? <>Work on this issue is blocked by {blockerLabel}, but the chain is stalled in review without a clear next step. Resolve the stalled reviews below or remove them as blockers.</>
+                  : <>Work on this issue is blocked by {blockerLabel}, but the chain is stalled in review without a clear next step. Resolve the stalled review below or remove it as a blocker.</>
                 : <>Work on this issue is blocked by {blockerLabel} until {blockers.length === 1 ? "it is" : "they are"} complete. Comments still wake the assignee for questions or triage.</>
               : <>Work on this issue is blocked until it is moved back to todo. Comments still wake the assignee for questions or triage.</>}
           </p>
