@@ -459,6 +459,8 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     retryReason?: "assignment_recovery" | "issue_continuation_needed" | null;
     assignToUser?: boolean;
     activePauseHold?: boolean;
+    runErrorCode?: string | null;
+    runError?: string | null;
   }) {
     const companyId = randomUUID();
     const agentId = randomUUID();
@@ -500,7 +502,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       runId,
       claimedAt: now,
       finishedAt: new Date("2026-03-19T00:05:00.000Z"),
-      error: input.runStatus === "succeeded" ? null : "run failed before issue advanced",
+      error: input.runStatus === "succeeded" ? null : (input.runError ?? "run failed before issue advanced"),
     });
 
     await db.insert(heartbeatRuns).values({
@@ -522,8 +524,8 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       startedAt: now,
       finishedAt: new Date("2026-03-19T00:05:00.000Z"),
       updatedAt: new Date("2026-03-19T00:05:00.000Z"),
-      errorCode: input.runStatus === "succeeded" ? null : "process_lost",
-      error: input.runStatus === "succeeded" ? null : "run failed before issue advanced",
+      errorCode: input.runStatus === "succeeded" ? null : (input.runErrorCode ?? "process_lost"),
+      error: input.runStatus === "succeeded" ? null : (input.runError ?? "run failed before issue advanced"),
     });
 
     await db.insert(issues).values([
@@ -648,6 +650,20 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     });
 
     return recovery;
+  }
+
+  async function sourceBlockerIssueIds(companyId: string, sourceIssueId: string) {
+    return db
+      .select({ blockerIssueId: issueRelations.issueId })
+      .from(issueRelations)
+      .where(
+        and(
+          eq(issueRelations.companyId, companyId),
+          eq(issueRelations.relatedIssueId, sourceIssueId),
+          eq(issueRelations.type, "blocks"),
+        ),
+      )
+      .then((rows) => rows.map((row) => row.blockerIssueId));
   }
 
   async function seedQueuedIssueRunFixture() {
@@ -936,6 +952,22 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
         originId: sourceIssueId,
       })
       .where(eq(issues.id, issueId));
+    const issuePrefix = `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
+    await db.insert(issues).values({
+      id: sourceIssueId,
+      companyId,
+      title: "Original stranded source",
+      status: "blocked",
+      priority: "medium",
+      issueNumber: 2,
+      identifier: `${issuePrefix}-2`,
+    });
+    await db.insert(issueRelations).values({
+      companyId,
+      issueId,
+      relatedIssueId: sourceIssueId,
+      type: "blocks",
+    });
     const heartbeat = heartbeatService(db);
 
     const result = await heartbeat.reapOrphanedRuns();
@@ -974,6 +1006,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     expect(comments[0]?.body).toContain("stopped automatic stranded-work recovery");
     expect(comments[0]?.body).toContain("recovery issues do not create nested `stranded_issue_recovery` issues");
     expect(comments[0]?.body).toContain("Latest retry failure: `process_lost`");
+    await expect(sourceBlockerIssueIds(companyId, sourceIssueId)).resolves.toEqual([issueId]);
   });
 
   it("does not block paused-tree work when immediate continuation recovery is suppressed by the hold", async () => {
@@ -1510,6 +1543,22 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
         originId: sourceIssueId,
       })
       .where(eq(issues.id, issueId));
+    const issuePrefix = `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
+    await db.insert(issues).values({
+      id: sourceIssueId,
+      companyId,
+      title: "Original stranded source",
+      status: "blocked",
+      priority: "medium",
+      issueNumber: 2,
+      identifier: `${issuePrefix}-2`,
+    });
+    await db.insert(issueRelations).values({
+      companyId,
+      issueId,
+      relatedIssueId: sourceIssueId,
+      type: "blocks",
+    });
     const heartbeat = heartbeatService(db);
 
     const result = await heartbeat.reconcileStrandedAssignedIssues();
@@ -1539,6 +1588,97 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     expect(comments[0]?.body).toContain("stopped automatic stranded-work recovery");
     expect(comments[0]?.body).toContain("Latest retry failure: `process_lost` - run failed before issue advanced.");
     expect(comments[0]?.body).toContain("recovery issues do not create nested `stranded_issue_recovery` issues");
+    await expect(sourceBlockerIssueIds(companyId, sourceIssueId)).resolves.toEqual([issueId]);
+  });
+
+  it("keeps repeated recovery failures on the same canonical recovery issue", async () => {
+    const sourceIssueId = randomUUID();
+    const { companyId, agentId, issueId, runId } = await seedStrandedIssueFixture({
+      status: "in_progress",
+      runStatus: "failed",
+    });
+    const issuePrefix = `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
+    await db.insert(issues).values({
+      id: sourceIssueId,
+      companyId,
+      title: "Original stranded source",
+      status: "blocked",
+      priority: "medium",
+      issueNumber: 2,
+      identifier: `${issuePrefix}-2`,
+    });
+    await db
+      .update(issues)
+      .set({
+        title: "Recover stalled issue PAP-1",
+        originKind: "stranded_issue_recovery",
+        originId: sourceIssueId,
+      })
+      .where(eq(issues.id, issueId));
+    await db.insert(issueRelations).values({
+      companyId,
+      issueId,
+      relatedIssueId: sourceIssueId,
+      type: "blocks",
+    });
+    const heartbeat = heartbeatService(db);
+
+    const firstResult = await heartbeat.reconcileStrandedAssignedIssues();
+    expect(firstResult.escalated).toBe(1);
+    expect(firstResult.issueIds).toEqual([issueId]);
+
+    const secondRunId = randomUUID();
+    await db.insert(heartbeatRuns).values({
+      id: secondRunId,
+      companyId,
+      agentId,
+      invocationSource: "assignment",
+      triggerDetail: "system",
+      status: "failed",
+      contextSnapshot: {
+        issueId,
+        taskId: issueId,
+        wakeReason: "issue_assigned",
+        source: "stranded_issue_recovery",
+      },
+      startedAt: new Date("2030-03-19T00:10:00.000Z"),
+      finishedAt: new Date("2030-03-19T00:15:00.000Z"),
+      createdAt: new Date("2030-03-19T00:10:00.000Z"),
+      updatedAt: new Date("2030-03-19T00:15:00.000Z"),
+      errorCode: "adapter_failed",
+      error: "adapter failed while retrying recovery issue",
+    });
+    await db
+      .update(issues)
+      .set({
+        status: "in_progress",
+        checkoutRunId: secondRunId,
+        executionRunId: null,
+      })
+      .where(eq(issues.id, issueId));
+
+    const secondResult = await heartbeat.reconcileStrandedAssignedIssues();
+    expect(secondResult.dispatchRequeued).toBe(0);
+    expect(secondResult.continuationRequeued).toBe(0);
+    expect(secondResult.escalated).toBe(1);
+    expect(secondResult.issueIds).toEqual([issueId]);
+
+    const recoveryIssuesForSource = await db
+      .select()
+      .from(issues)
+      .where(and(eq(issues.companyId, companyId), eq(issues.originKind, "stranded_issue_recovery"), eq(issues.originId, sourceIssueId)));
+    expect(recoveryIssuesForSource.map((issue) => issue.id)).toEqual([issueId]);
+
+    const nestedRecoveries = await db
+      .select()
+      .from(issues)
+      .where(and(eq(issues.companyId, companyId), eq(issues.originKind, "stranded_issue_recovery"), eq(issues.originId, issueId)));
+    expect(nestedRecoveries).toHaveLength(0);
+    await expect(sourceBlockerIssueIds(companyId, sourceIssueId)).resolves.toEqual([issueId]);
+
+    const comments = await db.select().from(issueComments).where(eq(issueComments.issueId, issueId));
+    expect(comments).toHaveLength(2);
+    expect(comments[1]?.body).toContain("Latest retry failure: `adapter_failed` - adapter failed while retrying recovery issue.");
   });
 
   it("does not escalate paused-tree recovery when the automatic continuation retry was cancelled by the hold", async () => {

@@ -25,6 +25,7 @@ import { getRunLogStore } from "../run-log-store.js";
 import {
   RECOVERY_ORIGIN_KINDS,
   buildIssueGraphLivenessLeafKey,
+  isStrandedIssueRecoveryOriginKind,
   parseIssueGraphLivenessIncidentKey,
 } from "./origins.js";
 import {
@@ -93,21 +94,9 @@ function summarizeRunFailureForIssueComment(run: LatestIssueRun) {
   if (!run) return null;
 
   const errorCode = readNonEmptyString(run.errorCode)?.trim() ?? null;
-  const rawError = readNonEmptyString(run.error)?.trim() ?? null;
-  const apiMessageMatch = rawError?.match(/"message"\s*:\s*"([^"]+)"/);
-  const firstLine = rawError
-    ?.split(/\r?\n/)
-    .map((line) => line.trim())
-    .find(Boolean) ?? null;
-  const summarySource = apiMessageMatch?.[1] ?? firstLine;
-  const summary =
-    summarySource && summarySource.length > 240
-      ? `${summarySource.slice(0, 237)}...`
-      : summarySource;
-
-  if (errorCode && summary) return ` Latest retry failure: \`${errorCode}\` - ${summary}.`;
-  if (errorCode) return ` Latest retry failure: \`${errorCode}\`.`;
-  if (summary) return ` Latest retry failure: ${summary}.`;
+  if (readNonEmptyString(run.error)) {
+    return " Latest retry failure details were withheld from the issue thread; inspect the linked run for evidence.";
+  }
   return null;
 }
 
@@ -179,7 +168,7 @@ function isAgentInvokable(agent: typeof agents.$inferSelect | null | undefined) 
 }
 
 function isStrandedIssueRecoveryIssue(issue: Pick<typeof issues.$inferSelect, "originKind">) {
-  return issue.originKind === STRANDED_ISSUE_RECOVERY_ORIGIN_KIND;
+  return isStrandedIssueRecoveryOriginKind(issue.originKind);
 }
 
 function isUnsuccessfulTerminalIssueRun(latestRun: LatestIssueRun) {
