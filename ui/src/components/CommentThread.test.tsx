@@ -218,6 +218,55 @@ describe("CommentThread", () => {
     });
   });
 
+  it("shows pause and resume timeline rows with the actor and time", () => {
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <MemoryRouter>
+          <CommentThread
+            comments={[]}
+            timelineEvents={[
+              {
+                id: "event-pause",
+                actorType: "user",
+                actorId: "local-board",
+                createdAt: new Date("2026-03-11T10:00:00.000Z"),
+                treeHoldChange: {
+                  action: "paused",
+                  mode: "pause",
+                  reason: "manual_issue_pause",
+                },
+              },
+              {
+                id: "event-resume",
+                actorType: "user",
+                actorId: "local-board",
+                createdAt: new Date("2026-03-11T11:00:00.000Z"),
+                treeHoldChange: {
+                  action: "resumed",
+                  mode: "pause",
+                  reason: "operator_resume",
+                },
+              },
+            ]}
+            onAdd={async () => {}}
+          />
+        </MemoryRouter>,
+      );
+    });
+
+    expect(container.textContent).toContain("Board");
+    expect(container.textContent).toContain("paused work");
+    expect(container.textContent).toContain("resumed work");
+    expect(container.textContent).toContain("2h ago");
+    expect(container.textContent).toContain("1h ago");
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
   it("hides the reopen control and infers reopen for closed agent-assigned issues", async () => {
     const root = createRoot(container);
     const onAdd = vi.fn(async () => {});

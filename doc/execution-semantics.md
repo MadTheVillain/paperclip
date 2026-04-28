@@ -1,7 +1,7 @@
 # Execution Semantics
 
 Status: Current implementation guide
-Date: 2026-04-26
+Date: 2026-04-28
 Audience: Product and engineering
 
 This document explains how Paperclip interprets issue assignment, issue status, execution runs, wakeups, parent/sub-issue structure, and blocker relationships.
@@ -162,11 +162,15 @@ The valid action-path primitives are:
 
 - an active run linked to the issue
 - a queued wake or continuation that can be delivered to the responsible agent
+- a scheduled retry or deferred issue-execution wake that is tied to the issue
+- an active subtree pause hold that intentionally suppresses execution for the issue
 - a typed execution-policy participant, such as `executionState.currentParticipant`
 - a pending issue-thread interaction or linked approval that is waiting for a specific responder
 - a human owner via `assigneeUserId`
 - a first-class blocker chain whose unresolved leaf issues are themselves healthy
 - an open explicit recovery issue that names the owner and action needed to restore liveness
+
+Run progress and issue liveness are separate questions. A finished heartbeat can prove that the agent did useful work during that run, but the finished run is not itself a live path for a non-terminal agent-owned issue. After a heartbeat exits, a non-terminal issue must still have a terminal state, explicit waiting path, explicit live path, or recovery/review path.
 
 ### Agent-assigned `todo`
 
@@ -180,6 +184,8 @@ A healthy dispatch state means at least one of these is true:
 
 An assigned `todo` issue is stalled when dispatch was interrupted, no wake remains queued or running, and no recovery path has been opened.
 
+If an assigned `todo` issue has no latest issue-linked run, no queued issue wake, no active execution path, no active pause hold, and the assignee is invokable and not budget-blocked, periodic recovery may enqueue one initial assignment dispatch backstop. This is a dispatch backstop, not proof that the issue has already been worked.
+
 ### Agent-assigned `in_progress`
 
 This is active-work state.
@@ -188,9 +194,20 @@ A healthy active-work state means at least one of these is true:
 
 - there is an active run for the issue
 - there is already a queued continuation wake
+- there is a scheduled retry or deferred issue-execution wake for the issue
+- the issue is covered by an active pause hold
 - there is an open explicit recovery issue for the lost execution path
 
 An agent-owned `in_progress` issue is stalled when it has no active run, no queued continuation, and no explicit recovery surface. A still-running but silent process is not automatically stalled; it is handled by the active-run watchdog contract.
+
+For terminal successful runs, Paperclip evaluates the post-run issue disposition instead of treating success as liveness. The disposition is:
+
+- `terminal`: the issue is `done` or `cancelled`
+- `explicitly_live`: an active run, queued wake, scheduled retry, or deferred issue-execution wake owns the next step
+- `explicitly_waiting`: a blocker, active pause hold, `in_review`, pending interaction, linked approval, execution-policy state, or explicit recovery issue owns the next step
+- `invalid`: the issue is non-terminal and no live, waiting, or recovery path exists
+
+Only `terminal`, `explicitly_live`, and `explicitly_waiting` are healthy resting states. `invalid` must become a bounded continuation, explicit recovery/review work, or a visible blocked state.
 
 ### `in_review`
 
@@ -234,11 +251,12 @@ Example:
 
 - issue is assigned to an agent
 - status is `todo`
-- the original wake/run died during or after dispatch
+- the original wake/run died during or after dispatch, or dispatch never produced a run
 - after restart there is no queued wake and nothing picks the issue back up
 
 Recovery rule:
 
+- if no issue-linked run exists yet, no queued wake exists, no pause hold suppresses recovery, and the assignee is invokable and not budget-blocked, Paperclip queues an initial assignment dispatch wake
 - if the latest issue-linked run failed/timed out/cancelled and no live execution path remains, Paperclip queues one automatic assignment recovery wake
 - if that recovery wake also finishes and the issue is still stranded, Paperclip moves the issue to `blocked` and posts a visible comment
 
@@ -255,23 +273,63 @@ Example:
 
 Recovery rule:
 
-- Paperclip queues one automatic continuation wake
-- if that continuation wake also finishes and the issue is still stranded, Paperclip moves the issue to `blocked` and posts a visible comment
+- if the latest run failed/timed out/cancelled and no live execution path remains, Paperclip queues one automatic continuation wake
+- if the latest successful run is terminal and the post-run issue disposition is invalid, Paperclip examines the run liveness state, next action, and actionability before continuing
+- if bounded continuation is safe, Paperclip queues a `run_liveness_continuation` wake with a stable idempotency key and continuation attempt count
+- if bounded continuation is exhausted or unsafe, Paperclip creates/reuses explicit recovery work or moves the issue to `blocked` with a visible comment
 
 This is an active-work continuity recovery.
+
+### 8.3 Run liveness classification and bounded continuation
+
+Run liveness classification describes what the just-finished run did. It is not the same thing as issue liveness.
+
+The current classifier records:
+
+- `completed` when the issue is terminal
+- `advanced` when the run produced concrete action evidence such as comments, document revisions, work products, activity events, or tool/action events
+- `blocked` when the issue or run output declares a concrete blocker
+- `needs_followup` when output indicates review, ambiguous follow-up, or useful output without concrete action evidence
+- `plan_only` when the run described runnable future work without concrete action evidence
+- `empty_response` when the run succeeded without useful output or concrete action evidence
+- `failed` when the run itself did not succeed
+
+The classifier also extracts a `nextAction` and actionability signal: `runnable`, `manager_review`, `blocked_external`, `approval_required`, or `unknown`.
+
+Bounded liveness continuation may be queued for:
+
+- `plan_only`
+- `empty_response`
+- `advanced` only when there is an explicit runnable `nextAction`
+
+Bounded continuation is not queued when:
+
+- the issue is terminal, `blocked`, `in_review`, or otherwise not in `todo`/`in_progress`
+- the issue is no longer assigned to the source run agent
+- execution-policy state owns the next decision
+- the assignee is not invokable
+- a budget hard stop applies
+- an equivalent continuation wake already exists
+- the max continuation attempts have been used
+- a productivity review or active subtree pause hold suppresses continuation
+
+The default max continuation attempts is 2. Exhaustion records a "Bounded liveness continuation exhausted" comment rather than silently spinning.
 
 ## 9. Startup and Periodic Reconciliation
 
 Startup recovery and periodic recovery are different from normal wakeup delivery.
 
-On startup and on the periodic recovery loop, Paperclip now does four things in sequence:
+On startup and on the periodic recovery loop, Paperclip now does these things in sequence:
 
 1. reap orphaned `running` runs
-2. resume persisted `queued` runs
-3. reconcile stranded assigned work
-4. scan silent active runs and create or update explicit watchdog review issues
+2. promote due scheduled retries
+3. resume persisted `queued` runs
+4. reconcile stranded assigned work
+5. reconcile issue-graph liveness
+6. scan silent active runs and create or update explicit watchdog review issues
+7. reconcile productivity/progression reviews
 
-The stranded-work pass closes the gap where issue state survives a crash but the wake/run path does not. The silent-run scan covers the separate case where a live process exists but has stopped producing observable output.
+The stranded-work pass closes the gap where issue state survives a crash but the wake/run path does not. The issue-graph pass covers invalid blocker/review dependency leaves. The silent-run scan covers the separate case where a live process exists but has stopped producing observable output. The productivity-review pass covers unusual but still productive execution patterns that need manager judgment, not automatic failure recovery.
 
 ## 10. Silent Active-Run Watchdog
 
@@ -298,7 +356,52 @@ Operators should prefer `snooze` for known time-bounded quiet periods. `continue
 
 The board can record watchdog decisions. The assigned owner of the watchdog evaluation issue can also record them. Other agents cannot.
 
-## 11. Auto-Recover vs Explicit Recovery vs Human Escalation
+## 11. Productivity and Progression Review
+
+Productivity review is a separate lane from liveness recovery.
+
+Liveness recovery asks: "does this issue have an accountable live/waiting/recovery path?" Productivity review asks: "is this autonomous progression pattern still a good use of time?"
+
+The productivity review reconciler scans agent-owned `todo` and `in_progress` issues. It skips user-owned issues, hidden issues, productivity-review issues, and descendants of productivity-review issues.
+
+It creates or updates at most one open `issue_productivity_review` child issue per source issue when one of these triggers fires:
+
+- no-comment streak: 10 consecutive completed issue-linked runs by the assigned agent without a run-created issue comment
+- long active duration: default 6 hours in the current active episode
+- high churn: default 10 runs or assignee run-linked comments in 1 hour, or 30 in 6 hours
+
+The review issue includes source issue, assigned agent, trigger reasons, sampled run/comment evidence, cost evidence when available, thresholds, and current next action. It is assigned to the source assignee's manager when possible, then creator, project lead, CTO/CEO-style fallback, subject to same-company and invokable/budget checks. The source issue is not automatically cancelled or reassigned by this review.
+
+Open productivity reviews can hold further automatic liveness continuations for soft-stop triggers:
+
+- no-comment streak
+- high churn
+
+Long active duration creates review work but does not interrupt an already active run by itself.
+
+Closing a productivity review as `done` acts as a short snooze for repeat review creation on the same source issue. The default resolved-review snooze is 6 hours.
+
+Productivity review issues must not create productivity-review descendants. They are manager decision points, not new autonomous loops.
+
+## 12. Pause Holds and Recovery Suppression
+
+Subtree pause/cancel/restore holds are execution-control primitives. While an issue is covered by an active pause hold, Paperclip treats the hold as an explicit waiting path and suppresses automatic recovery and liveness continuation for that issue.
+
+This includes:
+
+- assigned `todo` dispatch backstops
+- assigned `todo` or `in_progress` recovery wakes
+- bounded `run_liveness_continuation` wakes
+- scheduled retry promotion
+- deferred issue-execution promotion
+
+Pause holds do not make the issue complete. They intentionally stop automatic execution while preserving visible ownership, blockers, comments, and recovery evidence. Explicit human/operator actions can still resolve, reassign, unblock, or restore the held tree through the relevant tree-control flow.
+
+During startup and periodic reconciliation, pause-hold checks run inside the affected passes rather than as a separate top-level phase. The current sequence remains: reap orphaned `running` runs, promote due scheduled retries, resume persisted `queued` runs, reconcile stranded assigned work, reconcile issue-graph liveness, scan silent active runs, then reconcile productivity/progression reviews. Any pass that would otherwise dispatch, promote, continue, or escalate held issue work must recognize the active pause hold first and leave the issue quiet until the hold is released.
+
+User-visible history should retain attribution for these control actions. `issue.tree_hold_created` records who paused or cancelled the tree, and `issue.tree_hold_released` records who resumed or restored it. Raw heartbeat-run cancellation caused by the hold is a process interruption detail; it is not itself the same as pausing issue work.
+
+## 13. Auto-Recover vs Explicit Recovery vs Human Escalation
 
 Paperclip uses three different recovery outcomes, depending on how much it can safely infer.
 
@@ -308,8 +411,10 @@ Auto-recovery is allowed when ownership is clear and the control plane only lost
 
 Examples:
 
+- queue an initial dispatch wake for an assigned `todo` issue with no run and no queued wake
 - requeue one dispatch wake for an assigned `todo` issue whose latest run failed, timed out, or was cancelled
 - requeue one continuation wake for an assigned `in_progress` issue whose live execution path disappeared
+- queue bounded liveness continuation when a terminal successful run left a runnable next action but no live path
 - assign an orphan blocker back to its creator when that blocker is already preventing other work
 
 Auto-recovery preserves the existing owner. It does not choose a replacement agent.
@@ -323,6 +428,8 @@ Examples:
 - automatic stranded-work retry was already exhausted
 - a dependency graph has an invalid/uninvokable owner, unassigned blocker, or invalid review participant
 - an active run is silent past the watchdog threshold
+- a terminal successful run left a non-terminal issue with no safe runnable action path
+- a stranded recovery issue itself failed; recovery issues are blocked in place rather than spawning nested stranded-recovery issues
 
 The source issue remains visible and blocked on the recovery issue when blocking is necessary for correctness. The recovery owner must restore a live path, resolve the source issue manually, or record the reason it is a false positive.
 
@@ -340,7 +447,7 @@ Examples:
 
 In these cases Paperclip should leave a visible issue/comment trail instead of silently retrying.
 
-## 12. What This Does Not Mean
+## 14. What This Does Not Mean
 
 These semantics do not change V1 into an auto-reassignment system.
 
@@ -349,20 +456,25 @@ Paperclip still does not:
 - automatically reassign work to a different agent
 - infer dependency semantics from `parentId` alone
 - treat human-held work as heartbeat-managed execution
+- treat productivity review as proof of failure or as permission to cancel active work automatically
 
 The recovery model is intentionally conservative:
 
 - preserve ownership
 - retry once when the control plane lost execution continuity
+- continue productive work only through bounded, idempotent continuation paths
 - create explicit recovery work when the system can identify a bounded recovery owner/action
+- create productivity review work when the work is progressing but unusual enough to need manager judgment
 - escalate visibly when the system cannot safely keep going
 
-## 13. Practical Interpretation
+## 15. Practical Interpretation
 
 For a board operator, the intended meaning is:
 
 - agent-owned `in_progress` should mean \"this is live work or clearly surfaced as a problem\"
 - agent-owned `todo` should not stay assigned forever after a crash with no remaining wake path
+- productive work can continue, but unusual no-comment or high-churn patterns become manager-visible productivity reviews
+- pause-held trees are intentionally quiet until restored or manually acted on
 - parent/sub-issue explains structure
 - blockers explain waiting
 

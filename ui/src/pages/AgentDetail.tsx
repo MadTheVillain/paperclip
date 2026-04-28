@@ -111,6 +111,8 @@ const runStatusIcons: Record<string, { icon: typeof CheckCircle2; color: string 
 };
 
 const RUN_LOG_PAGE_BYTES = 256_000;
+export const RUN_CANCEL_ISSUE_PAUSE_WARNING =
+  "Cancelling this process does not pause the issue. Use Pause work on the issue page if you want to stop further runs.";
 
 const REDACTED_ENV_VALUE = "***REDACTED***";
 const SECRET_ENV_KEY_RE =
@@ -176,6 +178,14 @@ const sourceLabels: Record<string, string> = {
 
 const LIVE_SCROLL_BOTTOM_TOLERANCE_PX = 32;
 type ScrollContainer = Window | HTMLElement;
+
+export function RunCancelIssuePauseWarning() {
+  return (
+    <div className="max-w-2xl rounded-md border border-amber-500/30 bg-amber-500/10 px-2.5 py-2 text-xs text-amber-900 dark:text-amber-100">
+      {RUN_CANCEL_ISSUE_PAUSE_WARNING}
+    </div>
+  );
+}
 
 function isWindowContainer(container: ScrollContainer): container is Window {
   return container === window;
@@ -3205,6 +3215,9 @@ function RunDetail({ run: initialRun, agentRouteId, adapterType, adapterConfig }
                 </Button>
               )}
             </div>
+            {(run.status === "running" || run.status === "queued") && (
+              <RunCancelIssuePauseWarning />
+            )}
             {/* Adapter type · provider · model */}
             {(() => {
               const displayProvider = metrics.provider

@@ -200,6 +200,70 @@ describe("extractIssueTimelineEvents", () => {
     ]);
   });
 
+  it("extracts pause and resume tree hold activity with actor attribution", () => {
+    const events = extractIssueTimelineEvents([
+      {
+        id: "evt-pause",
+        companyId: "company-1",
+        actorType: "user",
+        actorId: "board-user-1",
+        action: "issue.tree_hold_created",
+        entityType: "issue",
+        entityId: "issue-1",
+        agentId: null,
+        runId: null,
+        createdAt: new Date("2026-03-31T12:01:00.000Z"),
+        details: {
+          holdId: "hold-1",
+          mode: "pause",
+          reason: "manual_issue_pause",
+        },
+      },
+      {
+        id: "evt-resume",
+        companyId: "company-1",
+        actorType: "user",
+        actorId: "board-user-1",
+        action: "issue.tree_hold_released",
+        entityType: "issue",
+        entityId: "issue-1",
+        agentId: null,
+        runId: null,
+        createdAt: new Date("2026-03-31T12:02:00.000Z"),
+        details: {
+          holdId: "hold-1",
+          mode: "pause",
+          reason: "resume_after_review",
+        },
+      },
+    ] satisfies ActivityEvent[]);
+
+    expect(events).toEqual([
+      {
+        id: "evt-pause",
+        createdAt: new Date("2026-03-31T12:01:00.000Z"),
+        actorType: "user",
+        actorId: "board-user-1",
+        treeHoldChange: {
+          action: "paused",
+          mode: "pause",
+          reason: "manual_issue_pause",
+        },
+      },
+      {
+        id: "evt-resume",
+        createdAt: new Date("2026-03-31T12:02:00.000Z"),
+        actorType: "user",
+        actorId: "board-user-1",
+        treeHoldChange: {
+          action: "resumed",
+          mode: "pause",
+          reason: "resume_after_review",
+        },
+      },
+    ]);
+  });
+
   it("ignores issue updates without visible status or assignee transitions", () => {
     const events = extractIssueTimelineEvents([
       {

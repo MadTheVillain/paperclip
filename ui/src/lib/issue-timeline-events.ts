@@ -5,11 +5,18 @@ export interface IssueTimelineAssignee {
   userId: string | null;
 }
 
+type IssueTreeHoldTimelineAction = "paused" | "resumed" | "cancelled" | "restored";
+
 export interface IssueTimelineEvent {
   id: string;
   createdAt: Date | string;
   actorType: ActivityEvent["actorType"];
   actorId: string;
+  treeHoldChange?: {
+    action: IssueTreeHoldTimelineAction;
+    mode: string | null;
+    reason: string | null;
+  };
   statusChange?: {
     from: string | null;
     to: string | null;
@@ -35,12 +42,27 @@ function nullableString(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
+function treeHoldAction(eventAction: string, mode: string | null): IssueTreeHoldTimelineAction | null {
+  if (eventAction === "issue.tree_hold_created") return mode === "cancel" ? "cancelled" : "paused";
+  if (eventAction === "issue.tree_hold_released") return mode === "cancel" ? "restored" : "resumed";
+  return null;
+}
+
 function toTimestamp(value: Date | string) {
   return new Date(value).getTime();
 }
 
 function sameAssignee(left: IssueTimelineAssignee, right: IssueTimelineAssignee) {
   return left.agentId === right.agentId && left.userId === right.userId;
+}
+
+export function formatIssueTimelineTreeHoldAction(event: IssueTimelineEvent): string | null {
+  const action = event.treeHoldChange?.action;
+  if (!action) return null;
+  if (action === "paused") return "paused work";
+  if (action === "resumed") return "resumed work";
+  if (action === "cancelled") return "cancelled this subtree";
+  return "restored this subtree";
 }
 
 function sortTimelineEvents<T extends { createdAt: Date | string; id: string }>(events: T[]) {
@@ -69,6 +91,24 @@ export function extractIssueTimelineEvents(activity: ActivityEvent[] | null | un
         actorId: event.actorId,
         commentId,
         followUpRequested: true,
+      });
+      continue;
+    }
+
+    if (event.action === "issue.tree_hold_created" || event.action === "issue.tree_hold_released") {
+      const mode = nullableString(details.mode);
+      const action = treeHoldAction(event.action, mode);
+      if (!action) continue;
+      events.push({
+        id: event.id,
+        createdAt: event.createdAt,
+        actorType: event.actorType,
+        actorId: event.actorId,
+        treeHoldChange: {
+          action,
+          mode,
+          reason: nullableString(details.reason),
+        },
       });
       continue;
     }

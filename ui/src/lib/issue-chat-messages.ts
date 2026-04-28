@@ -14,7 +14,7 @@ import {
   buildIssueThreadInteractionSummary,
   type IssueThreadInteraction,
 } from "./issue-thread-interactions";
-import type { IssueTimelineEvent } from "./issue-timeline-events";
+import { formatIssueTimelineTreeHoldAction, type IssueTimelineEvent } from "./issue-timeline-events";
 import {
   summarizeNotice,
 } from "./transcriptPresentation";
@@ -359,9 +359,12 @@ function createTimelineEventMessage(args: {
     : event.actorType === "system"
       ? "System"
       : (formatAssigneeUserLabel(event.actorId, currentUserId, userLabelMap) ?? "Board");
+  const treeHoldActionLabel = formatIssueTimelineTreeHoldAction(event);
 
   const lines: string[] = [
-    event.followUpRequested ? `${actorName} requested follow-up` : `${actorName} updated this issue`,
+    treeHoldActionLabel
+      ? `${actorName} ${treeHoldActionLabel}`
+      : event.followUpRequested ? `${actorName} requested follow-up` : `${actorName} updated this issue`,
   ];
   if (event.statusChange) {
     lines.push(
@@ -391,6 +394,7 @@ function createTimelineEventMessage(args: {
         actorName,
         actorType: event.actorType,
         actorId: event.actorId,
+        treeHoldActionLabel,
         statusChange: event.statusChange ?? null,
         assigneeChange: event.assigneeChange ?? null,
         followUpRequested: event.followUpRequested === true,
