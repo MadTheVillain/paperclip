@@ -356,6 +356,83 @@ describeEmbeddedPostgres("issue blocker attention", () => {
     });
   });
 
+  async function recordedRun(input: {
+    companyId: string;
+    agentId: string;
+    issueId: string;
+    livenessState?: string | null;
+    continuationAttempt?: number;
+  }) {
+    const runId = randomUUID();
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      companyId: input.companyId,
+      agentId: input.agentId,
+      status: "succeeded",
+      contextSnapshot: { issueId: input.issueId },
+      livenessState: (input.livenessState ?? "advanced") as never,
+      continuationAttempt: input.continuationAttempt ?? 0,
+    });
+    return runId;
+  }
+
+  it("classifies a chain whose leaf had a productive run that exited without a continuation as recovery_needed/productive_run_stopped", async () => {
+    const { companyId, agentId } = await createCompany("PRR");
+    const parentId = await insertIssue({ companyId, identifier: "PRR-1", title: "Parent", status: "blocked" });
+    const leafId = await insertIssue({
+      companyId,
+      identifier: "PRR-2",
+      title: "Recovery leaf",
+      status: "in_progress",
+      assigneeAgentId: agentId,
+    });
+    await block({ companyId, blockerIssueId: leafId, blockedIssueId: parentId });
+    await recordedRun({ companyId, agentId, issueId: leafId, livenessState: "advanced" });
+
+    const issuesList = await svc.list(companyId, { status: "blocked,in_progress" });
+    const parent = issuesList.find((issue) => issue.id === parentId);
+    const leaf = issuesList.find((issue) => issue.id === leafId);
+
+    expect(parent?.blockerAttention).toMatchObject({
+      state: "recovery_needed",
+      reason: "productive_run_stopped",
+      sampleBlockerIdentifier: "PRR-2",
+      nextActionHint: "wake_to_continue",
+    });
+    expect(parent?.blockerAttention?.nextActionOwner).toMatchObject({ type: "agent", agentId });
+
+    // Leaf surface gets the same recovery_needed classification on its own
+    // blockerAttention so the leaf-perspective notice can render.
+    expect(leaf?.blockerAttention).toMatchObject({
+      state: "recovery_needed",
+      reason: "productive_run_stopped",
+      nextActionHint: "wake_to_continue",
+    });
+    expect(leaf?.blockerAttention?.nextActionOwner).toMatchObject({ type: "agent", agentId });
+  });
+
+  it("escalates to continuation_exhausted when the latest run already used its bounded continuations", async () => {
+    const { companyId, agentId } = await createCompany("PRX");
+    const parentId = await insertIssue({ companyId, identifier: "PRX-1", title: "Parent", status: "blocked" });
+    const leafId = await insertIssue({
+      companyId,
+      identifier: "PRX-2",
+      title: "Exhausted leaf",
+      status: "in_progress",
+      assigneeAgentId: agentId,
+    });
+    await block({ companyId, blockerIssueId: leafId, blockedIssueId: parentId });
+    await recordedRun({ companyId, agentId, issueId: leafId, livenessState: "advanced", continuationAttempt: 2 });
+
+    const parent = (await svc.list(companyId, { status: "blocked" })).find((issue) => issue.id === parentId);
+    expect(parent?.blockerAttention).toMatchObject({
+      state: "recovery_needed",
+      reason: "continuation_exhausted",
+      sampleBlockerIdentifier: "PRX-2",
+      nextActionHint: "create_recovery_issue",
+    });
+  });
+
   it("does not treat a scheduled retry as actively covered work", async () => {
     const { companyId, agentId } = await createCompany("PBY");
     const parentId = await insertIssue({ companyId, identifier: "PBY-1", title: "Parent", status: "blocked" });
