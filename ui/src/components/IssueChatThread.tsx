@@ -12,6 +12,7 @@ import {
   createContext,
   Component,
   forwardRef,
+  memo,
   useContext,
   useEffect,
   useImperativeHandle,
@@ -107,24 +108,20 @@ import { AlertTriangle, ArrowRight, Brain, Check, ChevronDown, Copy, Hammer, Loa
 import { IssueBlockedNotice } from "./IssueBlockedNotice";
 
 interface IssueChatMessageContext {
-  feedbackVoteByTargetId: Map<string, FeedbackVoteValue>;
   feedbackDataSharingPreference: FeedbackDataSharingPreference;
   feedbackTermsUrl: string | null;
   agentMap?: Map<string, Agent>;
   currentUserId?: string | null;
   userLabelMap?: ReadonlyMap<string, string> | null;
   userProfileMap?: ReadonlyMap<string, CompanyUserProfile> | null;
-  activeRunIds: ReadonlySet<string>;
   onVote?: (
     commentId: string,
     vote: FeedbackVoteValue,
     options?: { allowSharing?: boolean; reason?: string },
   ) => Promise<void>;
   onStopRun?: (runId: string) => Promise<void>;
-  stoppingRunId?: string | null;
   onInterruptQueued?: (runId: string) => Promise<void>;
   onCancelQueued?: (commentId: string) => void;
-  interruptingQueuedRunId?: string | null;
   onImageClick?: (src: string) => void;
   onAcceptInteraction?: (
     interaction: SuggestTasksInteraction | RequestConfirmationInteraction,
@@ -141,10 +138,8 @@ interface IssueChatMessageContext {
 }
 
 const IssueChatCtx = createContext<IssueChatMessageContext>({
-  feedbackVoteByTargetId: new Map(),
   feedbackDataSharingPreference: "prompt",
   feedbackTermsUrl: null,
-  activeRunIds: new Set<string>(),
 });
 
 export function resolveAssistantMessageFoldedState(args: {
@@ -207,6 +202,18 @@ function useLiveElapsed(startMs: number | null | undefined, active: boolean): st
   }, [active, startMs]);
   if (!active || !startMs) return null;
   return formatDurationWords(Date.now() - startMs);
+}
+
+function useStableEvent<T extends (...args: never[]) => unknown>(callback: T | undefined): T | undefined {
+  const callbackRef = useRef(callback);
+  useLayoutEffect(() => {
+    callbackRef.current = callback;
+  }, [callback]);
+
+  return useMemo(() => {
+    if (!callback) return undefined;
+    return ((...args: Parameters<T>) => callbackRef.current?.(...args)) as T;
+  }, [Boolean(callback)]);
 }
 
 interface CommentReassignment {
@@ -547,7 +554,7 @@ function commentDateLabel(date: Date | string | undefined): string {
   return formatShortDate(date);
 }
 
-function IssueChatTextPart({ text, recessed }: { text: string; recessed?: boolean }) {
+const IssueChatTextPart = memo(function IssueChatTextPart({ text, recessed }: { text: string; recessed?: boolean }) {
   const { onImageClick } = useContext(IssueChatCtx);
   return (
     <MarkdownBody
@@ -559,7 +566,7 @@ function IssueChatTextPart({ text, recessed }: { text: string; recessed?: boolea
       {text}
     </MarkdownBody>
   );
-}
+});
 
 function humanizeValue(value: string | null) {
   if (!value) return "None";
@@ -1047,7 +1054,7 @@ function getThreadMessageCopyText(message: ThreadMessage) {
     .join("\n\n");
 }
 
-function IssueChatTextParts({
+const IssueChatTextParts = memo(function IssueChatTextParts({
   message,
   recessed = false,
 }: {
@@ -1067,7 +1074,7 @@ function IssueChatTextParts({
         ))}
     </>
   );
-}
+});
 
 function groupAssistantParts(
   content: readonly ThreadMessage["content"][number][],
@@ -1105,16 +1112,17 @@ function groupAssistantParts(
   return groups;
 }
 
-function IssueChatAssistantParts({
+const IssueChatAssistantParts = memo(function IssueChatAssistantParts({
   message,
   hasCoT,
 }: {
   message: ThreadMessage;
   hasCoT: boolean;
 }) {
+  const groupedParts = useMemo(() => groupAssistantParts(message.content), [message.content]);
   return (
     <>
-      {groupAssistantParts(message.content).map((group) => {
+      {groupedParts.map((group) => {
         if (group.type === "text") {
           return (
             <IssueChatTextPart
@@ -1134,13 +1142,18 @@ function IssueChatAssistantParts({
       })}
     </>
   );
-}
+});
 
-function IssueChatUserMessage({ message }: { message: ThreadMessage }) {
+function IssueChatUserMessage({
+  message,
+  isInterruptingQueuedRun,
+}: {
+  message: ThreadMessage;
+  isInterruptingQueuedRun: boolean;
+}) {
   const {
     onInterruptQueued,
     onCancelQueued,
-    interruptingQueuedRunId,
     currentUserId,
     userProfileMap,
   } = useContext(IssueChatCtx);
@@ -1201,10 +1214,10 @@ function IssueChatUserMessage({ message }: { message: ThreadMessage }) {
                 size="sm"
                 variant="outline"
                 className="h-6 border-red-300 px-2 text-[11px] text-red-700 hover:bg-red-50 hover:text-red-800 dark:border-red-500/40 dark:text-red-300 dark:hover:bg-red-500/10"
-                disabled={interruptingQueuedRunId === queueTargetRunId}
+                disabled={isInterruptingQueuedRun}
                 onClick={() => void onInterruptQueued(queueTargetRunId)}
               >
-                {interruptingQueuedRunId === queueTargetRunId ? "Interrupting..." : "Interrupt"}
+                {isInterruptingQueuedRun ? "Interrupting..." : "Interrupt"}
               </Button>
             ) : null}
             {onCancelQueued ? (
@@ -1290,16 +1303,23 @@ function IssueChatUserMessage({ message }: { message: ThreadMessage }) {
   );
 }
 
-function IssueChatAssistantMessage({ message }: { message: ThreadMessage }) {
+function IssueChatAssistantMessage({
+  message,
+  activeVote,
+  isRunActive,
+  isStoppingRun,
+}: {
+  message: ThreadMessage;
+  activeVote: FeedbackVoteValue | null;
+  isRunActive: boolean;
+  isStoppingRun: boolean;
+}) {
   const {
-    feedbackVoteByTargetId,
     feedbackDataSharingPreference,
     feedbackTermsUrl,
     onVote,
     agentMap,
-    activeRunIds,
     onStopRun,
-    stoppingRunId,
   } = useContext(IssueChatCtx);
   const custom = message.metadata.custom as Record<string, unknown>;
   const anchorId = typeof custom.anchorId === "string" ? custom.anchorId : undefined;
@@ -1321,7 +1341,7 @@ function IssueChatAssistantMessage({ message }: { message: ThreadMessage }) {
   const waitingText = typeof custom.waitingText === "string" ? custom.waitingText : "";
   const isRunning = message.role === "assistant" && message.status?.type === "running";
   const runHref = runId && runAgentId ? `/agents/${runAgentId}/runs/${runId}` : null;
-  const canStopRun = canStopIssueChatRun({ runId, runStatus, activeRunIds });
+  const canStopRun = Boolean(runId) && (isRunActive || runStatus === "queued" || runStatus === "running");
   const chainOfThoughtLabel = typeof custom.chainOfThoughtLabel === "string" ? custom.chainOfThoughtLabel : null;
   const hasCoT = message.content.some((p) => p.type === "reasoning" || p.type === "tool-call");
   const isFoldable = !isRunning && !!chainOfThoughtLabel;
@@ -1355,7 +1375,6 @@ function IssueChatAssistantMessage({ message }: { message: ThreadMessage }) {
     await onVote(commentId, vote, options);
   };
 
-  const activeVote = commentId ? feedbackVoteByTargetId.get(commentId) ?? null : null;
   const followUpRequested = custom.followUpRequested === true;
 
   return (
@@ -1493,14 +1512,14 @@ function IssueChatAssistantMessage({ message }: { message: ThreadMessage }) {
                     </DropdownMenuItem>
                     {canStopRun && onStopRun && runId ? (
                       <DropdownMenuItem
-                        disabled={stoppingRunId === runId}
+                        disabled={isStoppingRun}
                         className="text-red-700 focus:text-red-800 dark:text-red-300 dark:focus:text-red-200"
                         onSelect={() => {
                           void onStopRun(runId);
                         }}
                       >
                         <Square className="mr-2 h-3.5 w-3.5 fill-current" />
-                        {stoppingRunId === runId ? "Stopping…" : "Stop run"}
+                        {isStoppingRun ? "Stopping…" : "Stop run"}
                       </DropdownMenuItem>
                     ) : null}
                     {runHref ? (
@@ -2020,6 +2039,123 @@ function IssueChatSystemMessage({ message }: { message: ThreadMessage }) {
   }
 
   return null;
+}
+
+function issueChatMessageCustom(message: ThreadMessage): Record<string, unknown> {
+  return (message.metadata?.custom ?? {}) as Record<string, unknown>;
+}
+
+function issueChatMessageKind(message: ThreadMessage): string {
+  const custom = issueChatMessageCustom(message);
+  return typeof custom.kind === "string" ? custom.kind : message.role;
+}
+
+function issueChatMessageCommentId(message: ThreadMessage): string | null {
+  const custom = issueChatMessageCustom(message);
+  return typeof custom.commentId === "string" ? custom.commentId : null;
+}
+
+function issueChatMessageRunId(message: ThreadMessage): string | null {
+  const custom = issueChatMessageCustom(message);
+  return typeof custom.runId === "string" ? custom.runId : null;
+}
+
+function issueChatMessageQueueTargetRunId(message: ThreadMessage): string | null {
+  const custom = issueChatMessageCustom(message);
+  return typeof custom.queueTargetRunId === "string" ? custom.queueTargetRunId : null;
+}
+
+function issueChatMessageActiveVote(
+  message: ThreadMessage,
+  feedbackVoteByTargetId: ReadonlyMap<string, FeedbackVoteValue>,
+): FeedbackVoteValue | null {
+  const commentId = issueChatMessageCommentId(message);
+  return commentId ? feedbackVoteByTargetId.get(commentId) ?? null : null;
+}
+
+function issueChatMessageRunIsActive(
+  message: ThreadMessage,
+  activeRunIds: ReadonlySet<string>,
+): boolean {
+  const runId = issueChatMessageRunId(message);
+  return Boolean(runId && activeRunIds.has(runId));
+}
+
+function issueChatMessageRunIsStopping(
+  message: ThreadMessage,
+  stoppingRunId: string | null | undefined,
+): boolean {
+  const runId = issueChatMessageRunId(message);
+  return Boolean(runId && stoppingRunId === runId);
+}
+
+function issueChatMessageQueuedRunIsInterrupting(
+  message: ThreadMessage,
+  interruptingQueuedRunId: string | null | undefined,
+): boolean {
+  const queueTargetRunId = issueChatMessageQueueTargetRunId(message);
+  return Boolean(queueTargetRunId && interruptingQueuedRunId === queueTargetRunId);
+}
+
+interface IssueChatMessageRowProps {
+  message: ThreadMessage;
+  feedbackVoteByTargetId: ReadonlyMap<string, FeedbackVoteValue>;
+  activeRunIds: ReadonlySet<string>;
+  stoppingRunId?: string | null;
+  interruptingQueuedRunId?: string | null;
+}
+
+const IssueChatMessageRow = memo(function IssueChatMessageRow({
+  message,
+  feedbackVoteByTargetId,
+  activeRunIds,
+  stoppingRunId,
+  interruptingQueuedRunId,
+}: IssueChatMessageRowProps) {
+  const kind = issueChatMessageKind(message);
+  const activeVote = issueChatMessageActiveVote(message, feedbackVoteByTargetId);
+  const isRunActive = issueChatMessageRunIsActive(message, activeRunIds);
+  const isStoppingRun = issueChatMessageRunIsStopping(message, stoppingRunId);
+  const isInterruptingQueuedRun = issueChatMessageQueuedRunIsInterrupting(message, interruptingQueuedRunId);
+  const renderedMessage = message.role === "user"
+    ? (
+      <IssueChatUserMessage
+        message={message}
+        isInterruptingQueuedRun={isInterruptingQueuedRun}
+      />
+    )
+    : message.role === "assistant"
+      ? (
+        <IssueChatAssistantMessage
+          message={message}
+          activeVote={activeVote}
+          isRunActive={isRunActive}
+          isStoppingRun={isStoppingRun}
+        />
+      )
+      : <IssueChatSystemMessage message={message} />;
+
+  return (
+    <div
+      data-testid="issue-chat-message-row"
+      data-message-role={message.role}
+      data-message-kind={kind}
+    >
+      {renderedMessage}
+    </div>
+  );
+}, areIssueChatMessageRowPropsEqual);
+
+function areIssueChatMessageRowPropsEqual(
+  prev: IssueChatMessageRowProps,
+  next: IssueChatMessageRowProps,
+) {
+  if (prev.message !== next.message) return false;
+  if (issueChatMessageActiveVote(prev.message, prev.feedbackVoteByTargetId) !== issueChatMessageActiveVote(next.message, next.feedbackVoteByTargetId)) return false;
+  if (issueChatMessageRunIsActive(prev.message, prev.activeRunIds) !== issueChatMessageRunIsActive(next.message, next.activeRunIds)) return false;
+  if (issueChatMessageRunIsStopping(prev.message, prev.stoppingRunId) !== issueChatMessageRunIsStopping(next.message, next.stoppingRunId)) return false;
+  if (issueChatMessageQueuedRunIsInterrupting(prev.message, prev.interruptingQueuedRunId) !== issueChatMessageQueuedRunIsInterrupting(next.message, next.interruptingQueuedRunId)) return false;
+  return true;
 }
 
 const IssueChatComposer = forwardRef<IssueChatComposerHandle, IssueChatComposerProps>(function IssueChatComposer({
@@ -2704,46 +2840,47 @@ export function IssueChatThread({
     bottomAnchorRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }
 
+  const stableOnVote = useStableEvent(onVote);
+  const stableOnStopRun = useStableEvent(onStopRun);
+  const stableOnInterruptQueued = useStableEvent(onInterruptQueued);
+  const stableOnCancelQueued = useStableEvent(onCancelQueued);
+  const stableOnImageClick = useStableEvent(onImageClick);
+  const stableOnAcceptInteraction = useStableEvent(onAcceptInteraction);
+  const stableOnRejectInteraction = useStableEvent(onRejectInteraction);
+  const stableOnSubmitInteractionAnswers = useStableEvent(onSubmitInteractionAnswers);
+
   const chatCtx = useMemo<IssueChatMessageContext>(
     () => ({
-      feedbackVoteByTargetId,
       feedbackDataSharingPreference,
       feedbackTermsUrl,
       agentMap,
       currentUserId,
       userLabelMap,
       userProfileMap,
-      activeRunIds,
-      onVote,
-      onStopRun,
-      stoppingRunId,
-      onInterruptQueued,
-      onCancelQueued,
-      interruptingQueuedRunId,
-      onImageClick,
-      onAcceptInteraction,
-      onRejectInteraction,
-      onSubmitInteractionAnswers,
+      onVote: stableOnVote,
+      onStopRun: stableOnStopRun,
+      onInterruptQueued: stableOnInterruptQueued,
+      onCancelQueued: stableOnCancelQueued,
+      onImageClick: stableOnImageClick,
+      onAcceptInteraction: stableOnAcceptInteraction,
+      onRejectInteraction: stableOnRejectInteraction,
+      onSubmitInteractionAnswers: stableOnSubmitInteractionAnswers,
     }),
     [
-      feedbackVoteByTargetId,
       feedbackDataSharingPreference,
       feedbackTermsUrl,
       agentMap,
       currentUserId,
       userLabelMap,
       userProfileMap,
-      activeRunIds,
-      onVote,
-      onStopRun,
-      stoppingRunId,
-      onInterruptQueued,
-      onCancelQueued,
-      interruptingQueuedRunId,
-      onImageClick,
-      onAcceptInteraction,
-      onRejectInteraction,
-      onSubmitInteractionAnswers,
+      stableOnVote,
+      stableOnStopRun,
+      stableOnInterruptQueued,
+      stableOnCancelQueued,
+      stableOnImageClick,
+      stableOnAcceptInteraction,
+      stableOnRejectInteraction,
+      stableOnSubmitInteractionAnswers,
     ],
   );
 
@@ -2752,10 +2889,13 @@ export function IssueChatThread({
     ?? (variant === "embedded"
       ? "No run output yet."
       : "This issue conversation is empty. Start with a message below.");
-  const errorBoundaryResetKey = useMemo(
-    () => messages.map((message) => `${message.id}:${message.role}:${message.content.length}:${message.status?.type ?? "none"}`).join("|"),
-    [messages],
-  );
+  const previousErrorBoundaryMessagesRef = useRef<readonly ThreadMessage[] | null>(null);
+  const errorBoundaryResetVersionRef = useRef(0);
+  if (previousErrorBoundaryMessagesRef.current !== messages) {
+    previousErrorBoundaryMessagesRef.current = messages;
+    errorBoundaryResetVersionRef.current += 1;
+  }
+  const errorBoundaryResetKey = String(errorBoundaryResetVersionRef.current);
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
@@ -2797,25 +2937,16 @@ export function IssueChatThread({
                 // Keep transcript rendering independent from assistant-ui's
                 // index-scoped message providers; live transcripts can shrink
                 // or regroup while the runtime still holds stale indices.
-                messages.map((message) => {
-                  const custom = message.metadata?.custom as Record<string, unknown> | undefined;
-                  const kind = typeof custom?.kind === "string" ? custom.kind : message.role;
-                  const renderedMessage = message.role === "user"
-                    ? <IssueChatUserMessage message={message} />
-                    : message.role === "assistant"
-                      ? <IssueChatAssistantMessage message={message} />
-                      : <IssueChatSystemMessage message={message} />;
-                  return (
-                    <div
-                      key={message.id}
-                      data-testid="issue-chat-message-row"
-                      data-message-role={message.role}
-                      data-message-kind={kind}
-                    >
-                      {renderedMessage}
-                    </div>
-                  );
-                })
+                messages.map((message) => (
+                  <IssueChatMessageRow
+                    key={message.id}
+                    message={message}
+                    feedbackVoteByTargetId={feedbackVoteByTargetId}
+                    activeRunIds={activeRunIds}
+                    stoppingRunId={stoppingRunId}
+                    interruptingQueuedRunId={interruptingQueuedRunId}
+                  />
+                ))
               )}
               {showComposer ? (
                 <div data-testid="issue-chat-thread-notices" className="space-y-2">

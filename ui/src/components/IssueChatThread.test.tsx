@@ -25,7 +25,8 @@ import {
   issueChatLongThreadTranscriptsByRunId,
 } from "../fixtures/issueChatLongThreadFixture";
 
-const { markdownEditorFocusMock } = vi.hoisted(() => ({
+const { markdownBodyRenderMock, markdownEditorFocusMock } = vi.hoisted(() => ({
+  markdownBodyRenderMock: vi.fn(),
   markdownEditorFocusMock: vi.fn(),
 }));
 
@@ -66,7 +67,10 @@ vi.mock("../lib/issue-chat-scroll", async (importOriginal) => {
 });
 
 vi.mock("./MarkdownBody", () => ({
-  MarkdownBody: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  MarkdownBody: ({ children }: { children: ReactNode }) => {
+    markdownBodyRenderMock(children);
+    return <div>{children}</div>;
+  },
 }));
 
 vi.mock("./MarkdownEditor", () => ({
@@ -291,6 +295,7 @@ describe("IssueChatThread", () => {
     captureComposerViewportSnapshotMock.mockClear();
     restoreComposerViewportSnapshotMock.mockClear();
     shouldPreserveComposerViewportMock.mockClear();
+    markdownBodyRenderMock.mockClear();
   });
 
   it("drops the count heading and does not use an internal scrollbox", () => {
@@ -352,6 +357,139 @@ describe("IssueChatThread", () => {
     const rows = container.querySelectorAll('[data-testid="issue-chat-message-row"]');
     expect(rows.length).toBeGreaterThanOrEqual(450);
     expect(container.querySelectorAll('[data-message-role="assistant"]').length).toBeGreaterThanOrEqual(150);
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it("does not re-render long-thread markdown rows for unrelated layout updates", () => {
+    const root = createRoot(container);
+    const onAdd = async () => {};
+    const hasOutputForRun = (runId: string) => issueChatLongThreadTranscriptsByRunId.has(runId);
+
+    act(() => {
+      root.render(
+        <MemoryRouter>
+          <IssueChatThread
+            comments={issueChatLongThreadComments}
+            linkedRuns={issueChatLongThreadLinkedRuns}
+            timelineEvents={issueChatLongThreadEvents}
+            liveRuns={[]}
+            agentMap={issueChatLongThreadAgentMap}
+            currentUserId="user-board"
+            onAdd={onAdd}
+            showComposer={false}
+            showJumpToLatest={false}
+            enableLiveTranscriptPolling={false}
+            transcriptsByRunId={issueChatLongThreadTranscriptsByRunId}
+            hasOutputForRun={hasOutputForRun}
+          />
+        </MemoryRouter>,
+      );
+    });
+
+    expect(markdownBodyRenderMock).toHaveBeenCalled();
+    markdownBodyRenderMock.mockClear();
+
+    act(() => {
+      root.render(
+        <MemoryRouter>
+          <IssueChatThread
+            comments={issueChatLongThreadComments}
+            linkedRuns={issueChatLongThreadLinkedRuns}
+            timelineEvents={issueChatLongThreadEvents}
+            liveRuns={[]}
+            agentMap={issueChatLongThreadAgentMap}
+            currentUserId="user-board"
+            onAdd={onAdd}
+            showComposer={false}
+            showJumpToLatest
+            enableLiveTranscriptPolling={false}
+            transcriptsByRunId={issueChatLongThreadTranscriptsByRunId}
+            hasOutputForRun={hasOutputForRun}
+          />
+        </MemoryRouter>,
+      );
+    });
+
+    expect(markdownBodyRenderMock).not.toHaveBeenCalled();
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it("does not re-render unchanged markdown when feedback votes change", () => {
+    const root = createRoot(container);
+    const onAdd = async () => {};
+    const onVote = async () => {};
+    const comments = [{
+      id: "comment-agent-feedback",
+      companyId: "company-1",
+      issueId: "issue-1",
+      authorAgentId: "agent-1",
+      authorUserId: null,
+      body: "Agent summary with **markdown**",
+      createdAt: new Date("2026-04-06T12:00:00.000Z"),
+      updatedAt: new Date("2026-04-06T12:00:00.000Z"),
+    }];
+
+    act(() => {
+      root.render(
+        <MemoryRouter>
+          <IssueChatThread
+            comments={comments}
+            linkedRuns={[]}
+            timelineEvents={[]}
+            liveRuns={[]}
+            onAdd={onAdd}
+            onVote={onVote}
+            feedbackVotes={[]}
+            showComposer={false}
+            enableLiveTranscriptPolling={false}
+          />
+        </MemoryRouter>,
+      );
+    });
+
+    expect(markdownBodyRenderMock).toHaveBeenCalled();
+    markdownBodyRenderMock.mockClear();
+
+    act(() => {
+      root.render(
+        <MemoryRouter>
+          <IssueChatThread
+            comments={comments}
+            linkedRuns={[]}
+            timelineEvents={[]}
+            liveRuns={[]}
+            onAdd={onAdd}
+            onVote={onVote}
+            feedbackVotes={[{
+              id: "feedback-1",
+              companyId: "company-1",
+              issueId: "issue-1",
+              targetType: "issue_comment",
+              targetId: "comment-agent-feedback",
+              authorUserId: "user-1",
+              vote: "up",
+              reason: null,
+              sharedWithLabs: false,
+              sharedAt: null,
+              consentVersion: null,
+              redactionSummary: null,
+              createdAt: new Date("2026-04-06T12:01:00.000Z"),
+              updatedAt: new Date("2026-04-06T12:01:00.000Z"),
+            }]}
+            showComposer={false}
+            enableLiveTranscriptPolling={false}
+          />
+        </MemoryRouter>,
+      );
+    });
+
+    expect(markdownBodyRenderMock).not.toHaveBeenCalled();
 
     act(() => {
       root.unmount();
