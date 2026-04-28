@@ -10,6 +10,7 @@ import {
   IssueChatThread,
   VIRTUALIZED_THREAD_ROW_THRESHOLD,
   canStopIssueChatRun,
+  findLatestCommentMessageIndex,
   resolveAssistantMessageFoldedState,
   resolveIssueChatHumanAuthor,
 } from "./IssueChatThread";
@@ -27,6 +28,10 @@ import {
   issueChatLongThreadLinkedRuns,
   issueChatLongThreadTranscriptsByRunId,
 } from "../fixtures/issueChatLongThreadFixture";
+import type {
+  IssueChatLinkedRun,
+  IssueChatTranscriptEntry,
+} from "../lib/issue-chat-messages";
 
 function hasSmoothScrollBehavior(arg: unknown) {
   return typeof arg === "object"
@@ -529,6 +534,136 @@ describe("IssueChatThread", () => {
       root.unmount();
     });
     scrollHost.remove();
+  });
+
+  // Regression for PAP-2672: when the merged feed ends with a non-comment row
+  // (run/timeline/embedded output) we still want Jump to latest to land on the
+  // last comment, not whichever activity row sorts last.
+  it("targets the latest comment row when trailing rows are non-comments (PAP-2672)", () => {
+    const lastComment = issueChatLongThreadComments.at(-1);
+    expect(lastComment).toBeDefined();
+    const trailingRunStart = new Date(new Date(lastComment!.createdAt).getTime() + 60_000);
+    const trailingRun: IssueChatLinkedRun = {
+      runId: "trailing-run-pap-2672",
+      status: "failed",
+      agentId: "agent-perf-codex",
+      agentName: "TrailingRunner",
+      adapterType: "codex_local",
+      createdAt: trailingRunStart,
+      startedAt: trailingRunStart,
+      finishedAt: trailingRunStart,
+      hasStoredOutput: true,
+    };
+    const trailingTranscriptEntries: readonly IssueChatTranscriptEntry[] = [
+      {
+        kind: "assistant",
+        ts: trailingRunStart.toISOString(),
+        text: "Trailing run posted after the latest comment.",
+      },
+    ];
+    const transcriptsByRunId = new Map(issueChatLongThreadTranscriptsByRunId);
+    transcriptsByRunId.set(trailingRun.runId, trailingTranscriptEntries);
+    const linkedRuns: IssueChatLinkedRun[] = [
+      ...issueChatLongThreadLinkedRuns,
+      trailingRun,
+    ];
+
+    container.remove();
+    const scrollHost = document.createElement("main");
+    scrollHost.id = "main-content";
+    scrollHost.style.overflowY = "auto";
+    scrollHost.style.overflow = "auto";
+    scrollHost.style.height = "800px";
+    Object.defineProperty(scrollHost, "scrollHeight", {
+      configurable: true,
+      get: () => 200_000,
+    });
+    Object.defineProperty(scrollHost, "clientHeight", {
+      configurable: true,
+      get: () => 800,
+    });
+    document.body.appendChild(scrollHost);
+    container = document.createElement("div");
+    scrollHost.appendChild(container);
+
+    const elementScrollToMock = vi.fn();
+    scrollHost.scrollTo = elementScrollToMock as unknown as typeof scrollHost.scrollTo;
+
+    const root = createRoot(container);
+    act(() => {
+      root.render(
+        <MemoryRouter>
+          <IssueChatThread
+            comments={issueChatLongThreadComments}
+            linkedRuns={linkedRuns}
+            timelineEvents={issueChatLongThreadEvents}
+            liveRuns={[]}
+            agentMap={issueChatLongThreadAgentMap}
+            currentUserId="user-board"
+            onAdd={async () => {}}
+            enableLiveTranscriptPolling={false}
+            transcriptsByRunId={transcriptsByRunId}
+            hasOutputForRun={(runId) => transcriptsByRunId.has(runId)}
+          />
+        </MemoryRouter>,
+      );
+    });
+
+    const virtualizerEl = container.querySelector<HTMLDivElement>(
+      '[data-testid="issue-chat-thread-virtualizer"]',
+    );
+    expect(virtualizerEl).not.toBeNull();
+    const totalMergedRows = Number(virtualizerEl?.dataset.virtualCount ?? "0");
+    expect(totalMergedRows).toBeGreaterThan(VIRTUALIZED_THREAD_ROW_THRESHOLD);
+
+    elementScrollToMock.mockClear();
+
+    const jump = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent === "Jump to latest",
+    ) as HTMLButtonElement | undefined;
+    expect(jump).toBeDefined();
+
+    act(() => {
+      jump?.click();
+    });
+
+    const smoothCalls = elementScrollToMock.mock.calls
+      .map((call) => call[0] as ScrollToOptions)
+      .filter(hasSmoothScrollBehavior);
+    expect(smoothCalls.length).toBeGreaterThan(0);
+
+    // For align="end" with the very last index, tanstack-virtual short-circuits
+    // to getMaxScrollOffset() (= scrollHeight - clientHeight = 199_200 here).
+    // A jump to the latest comment row (one slot earlier) lands at item.end -
+    // clientHeight, which is strictly less. Asserting top < maxScrollOffset
+    // proves the button isn't routing to the trailing run row.
+    const maxScrollOffset = 200_000 - 800;
+    const lastTop = smoothCalls[smoothCalls.length - 1]?.top;
+    expect(typeof lastTop).toBe("number");
+    expect(lastTop as number).toBeLessThan(maxScrollOffset);
+    expect(lastTop as number).toBeGreaterThan(0);
+
+    act(() => {
+      root.unmount();
+    });
+    scrollHost.remove();
+  });
+
+  it("findLatestCommentMessageIndex prefers the last comment-anchored row (PAP-2672)", () => {
+    const messages = [
+      { metadata: { custom: { anchorId: "comment-a" } } },
+      { metadata: { custom: { anchorId: "run-1" } } },
+      { metadata: { custom: { anchorId: "comment-b" } } },
+      { metadata: { custom: { anchorId: "run-2" } } },
+      { metadata: { custom: { anchorId: "activity-3" } } },
+    ];
+    expect(findLatestCommentMessageIndex(messages as never)).toBe(2);
+    expect(
+      findLatestCommentMessageIndex([
+        { metadata: { custom: { anchorId: "run-only" } } },
+      ] as never),
+    ).toBe(-1);
+    expect(findLatestCommentMessageIndex([] as never)).toBe(-1);
   });
 
   it("keeps the direct render path for short threads under the virtualization threshold", () => {
