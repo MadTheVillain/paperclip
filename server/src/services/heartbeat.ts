@@ -26,8 +26,11 @@ import {
   issueDocuments,
   heartbeatRunEvents,
   heartbeatRuns,
+  approvals,
+  issueApprovals,
   issueComments,
   issueRelations,
+  issueThreadInteractions,
   issues,
   issueWorkProducts,
   projects,
@@ -127,6 +130,8 @@ import { environmentService } from "./environments.js";
 import { environmentRuntimeService } from "./environment-runtime.js";
 import { environmentRunOrchestrator } from "./environment-run-orchestrator.js";
 import type { PluginWorkerManager } from "./plugin-worker-manager.js";
+
+const EXPLICIT_WAITING_INTERACTION_KINDS = ["request_confirmation", "ask_user_questions"];
 
 const MAX_LIVE_LOG_CHUNK_BYTES = 8 * 1024;
 const MAX_PERSISTED_LOG_CHUNK_CHARS = 64 * 1024;
@@ -2768,6 +2773,39 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     });
   }
 
+  async function hasExplicitIssueWait(companyId: string, issueId: string) {
+    const [interaction, approval] = await Promise.all([
+      db
+        .select({ id: issueThreadInteractions.id })
+        .from(issueThreadInteractions)
+        .where(
+          and(
+            eq(issueThreadInteractions.companyId, companyId),
+            eq(issueThreadInteractions.issueId, issueId),
+            eq(issueThreadInteractions.status, "pending"),
+            inArray(issueThreadInteractions.kind, EXPLICIT_WAITING_INTERACTION_KINDS),
+          ),
+        )
+        .limit(1)
+        .then((rows) => rows[0] ?? null),
+      db
+        .select({ id: issueApprovals.issueId })
+        .from(issueApprovals)
+        .innerJoin(approvals, eq(issueApprovals.approvalId, approvals.id))
+        .where(
+          and(
+            eq(issueApprovals.companyId, companyId),
+            eq(issueApprovals.issueId, issueId),
+            inArray(approvals.status, ["pending", "revision_requested"]),
+          ),
+        )
+        .limit(1)
+        .then((rows) => rows[0] ?? null),
+    ]);
+
+    return Boolean(interaction || approval);
+  }
+
   async function handleRunLivenessContinuation(run: typeof heartbeatRuns.$inferSelect) {
     const livenessState = run.livenessState as RunLivenessState | null;
     if (!livenessState) return;
@@ -2812,6 +2850,14 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         })
         : null;
     if (issue) {
+      if (await hasExplicitIssueWait(issue.companyId, issue.id)) {
+        await setRunStatus(run.id, run.status, {
+          livenessReason:
+            `${run.livenessReason ?? "Run ended without concrete progress"}; continuation suppressed by explicit interaction or approval wait`,
+        });
+        return;
+      }
+
       const productivityHold = await productivityReviews.isProductivityReviewContinuationHoldActive({
         companyId: issue.companyId,
         issueId: issue.id,

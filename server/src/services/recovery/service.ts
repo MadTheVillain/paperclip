@@ -61,6 +61,7 @@ const ACTIVE_RUN_OUTPUT_EVIDENCE_TAIL_BYTES = 8 * 1024;
 const STRANDED_ISSUE_RECOVERY_ORIGIN_KIND = RECOVERY_ORIGIN_KINDS.strandedIssueRecovery;
 const STALE_ACTIVE_RUN_EVALUATION_ORIGIN_KIND = RECOVERY_ORIGIN_KINDS.staleActiveRunEvaluation;
 const DEFERRED_WAKE_CONTEXT_KEY = "_paperclipWakeContext";
+const EXPLICIT_WAITING_INTERACTION_KINDS = ["request_confirmation", "ask_user_questions"];
 
 type RecoveryWakeupOptions = {
   source?: "timer" | "assignment" | "on_demand" | "automation";
@@ -407,6 +408,7 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
             eq(issueThreadInteractions.companyId, issue.companyId),
             eq(issueThreadInteractions.issueId, issue.id),
             eq(issueThreadInteractions.status, "pending"),
+            inArray(issueThreadInteractions.kind, EXPLICIT_WAITING_INTERACTION_KINDS),
           ),
         )
         .limit(1)
@@ -2075,7 +2077,12 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
           status: issueThreadInteractions.status,
         })
         .from(issueThreadInteractions)
-        .where(eq(issueThreadInteractions.status, "pending")),
+        .where(
+          and(
+            eq(issueThreadInteractions.status, "pending"),
+            inArray(issueThreadInteractions.kind, EXPLICIT_WAITING_INTERACTION_KINDS),
+          ),
+        ),
       db
         .select({
           companyId: issueApprovals.companyId,

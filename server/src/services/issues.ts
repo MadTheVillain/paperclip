@@ -674,6 +674,7 @@ const ACTIVE_RUN_STATUSES = ["queued", "running"];
 const BLOCKER_ATTENTION_ACTIVE_RUN_STATUSES = ["queued", "running"];
 const BLOCKER_ATTENTION_ACTIVE_WAKE_STATUSES = ["queued", "deferred_issue_execution"];
 const BLOCKER_ATTENTION_PENDING_INTERACTION_STATUSES = ["pending"];
+const BLOCKER_ATTENTION_WAITING_INTERACTION_KINDS = ["request_confirmation", "ask_user_questions"];
 const BLOCKER_ATTENTION_PENDING_APPROVAL_STATUSES = ["pending", "revision_requested"];
 const BLOCKER_ATTENTION_OPEN_RECOVERY_ORIGIN_KIND = "harness_liveness_escalation";
 const PRODUCTIVITY_REVIEW_ORIGIN_KIND = "issue_productivity_review";
@@ -737,6 +738,10 @@ type IssueBlockerAttentionAgentRow = {
   id: string;
   companyId: string;
   status: string;
+};
+type IssueBlockerExplicitWaitingPath = {
+  owner: IssueBlockerNextActionOwner;
+  hint: IssueBlockerNextActionHint;
 };
 
 async function activeRunMapForIssues(
@@ -819,6 +824,23 @@ function ownerForLeafRecovery(node: IssueBlockerAttentionNode): IssueBlockerNext
     return { type: "user", agentId: null, userId: node.assigneeUserId };
   }
   return { type: "none", agentId: null, userId: null };
+}
+
+function ownerForExplicitWait(input: { assigneeAgentId?: string | null; assigneeUserId?: string | null }): IssueBlockerNextActionOwner {
+  if (input.assigneeUserId) {
+    return { type: "user", agentId: null, userId: input.assigneeUserId };
+  }
+  if (input.assigneeAgentId) {
+    return { type: "agent", agentId: input.assigneeAgentId, userId: null };
+  }
+  return { type: "user", agentId: null, userId: null };
+}
+
+function explicitWaitingPathForOwner(owner: IssueBlockerNextActionOwner): IssueBlockerExplicitWaitingPath {
+  return {
+    owner,
+    hint: "needs_human_review",
+  };
 }
 
 type IssueBlockerAttentionLatestRunRow = {
@@ -1272,12 +1294,22 @@ async function listIssueBlockerAttentionMap(
     }
   }
 
-  const reviewNodeIds = [...nodesById.values()]
-    .filter((node) => node.status === "in_review")
+  const nonTerminalNodeIds = [...nodesById.values()]
+    .filter((node) => node.status !== "done" && node.status !== "cancelled")
     .map((node) => node.id);
-  const explicitWaitingIssueIds = new Set<string>();
-  if (reviewNodeIds.length > 0) {
-    for (const chunk of chunkList(reviewNodeIds, ISSUE_LIST_RELATED_QUERY_CHUNK_SIZE)) {
+  const explicitWaitingByIssueId = new Map<string, IssueBlockerExplicitWaitingPath>();
+  const setExplicitWaitingPath = (issueId: string | null | undefined, path: IssueBlockerExplicitWaitingPath) => {
+    if (!issueId || explicitWaitingByIssueId.has(issueId)) return;
+    explicitWaitingByIssueId.set(issueId, path);
+  };
+  for (const node of nodesById.values()) {
+    if (node.status === "done" || node.status === "cancelled") continue;
+    if (node.assigneeUserId) {
+      setExplicitWaitingPath(node.id, explicitWaitingPathForOwner(ownerForExplicitWait(node)));
+    }
+  }
+  if (nonTerminalNodeIds.length > 0) {
+    for (const chunk of chunkList(nonTerminalNodeIds, ISSUE_LIST_RELATED_QUERY_CHUNK_SIZE)) {
       const interactionRows: Array<{ issueId: string }> = await dbOrTx
         .select({ issueId: issueThreadInteractions.issueId })
         .from(issueThreadInteractions)
@@ -1285,10 +1317,16 @@ async function listIssueBlockerAttentionMap(
           and(
             eq(issueThreadInteractions.companyId, companyId),
             inArray(issueThreadInteractions.status, BLOCKER_ATTENTION_PENDING_INTERACTION_STATUSES),
+            inArray(issueThreadInteractions.kind, BLOCKER_ATTENTION_WAITING_INTERACTION_KINDS),
             inArray(issueThreadInteractions.issueId, chunk),
           ),
         );
-      for (const row of interactionRows) explicitWaitingIssueIds.add(row.issueId);
+      for (const row of interactionRows) {
+        const node = nodesById.get(row.issueId);
+        setExplicitWaitingPath(row.issueId, explicitWaitingPathForOwner(ownerForExplicitWait({
+          assigneeUserId: node?.assigneeUserId ?? null,
+        })));
+      }
 
       const approvalRows: Array<{ issueId: string }> = await dbOrTx
         .select({ issueId: issueApprovals.issueId })
@@ -1301,10 +1339,23 @@ async function listIssueBlockerAttentionMap(
             inArray(issueApprovals.issueId, chunk),
           ),
         );
-      for (const row of approvalRows) explicitWaitingIssueIds.add(row.issueId);
+      for (const row of approvalRows) {
+        const node = nodesById.get(row.issueId);
+        setExplicitWaitingPath(row.issueId, explicitWaitingPathForOwner(ownerForExplicitWait({
+          assigneeUserId: node?.assigneeUserId ?? null,
+        })));
+      }
 
-      const recoveryRows: Array<{ originId: string | null }> = await dbOrTx
-        .select({ originId: issues.originId })
+      const recoveryRows: Array<{
+        originId: string | null;
+        assigneeAgentId: string | null;
+        assigneeUserId: string | null;
+      }> = await dbOrTx
+        .select({
+          originId: issues.originId,
+          assigneeAgentId: issues.assigneeAgentId,
+          assigneeUserId: issues.assigneeUserId,
+        })
         .from(issues)
         .where(
           and(
@@ -1316,7 +1367,7 @@ async function listIssueBlockerAttentionMap(
           ),
         );
       for (const row of recoveryRows) {
-        if (row.originId) explicitWaitingIssueIds.add(row.originId);
+        setExplicitWaitingPath(row.originId, explicitWaitingPathForOwner(ownerForExplicitWait(row)));
       }
     }
   }
@@ -1341,7 +1392,7 @@ async function listIssueBlockerAttentionMap(
       BLOCKER_ATTENTION_RECOVERY_LEAF_STATUSES.has(node.status) &&
       Boolean(node.assigneeAgentId) &&
       !activeIssueIds.has(node.id) &&
-      !explicitWaitingIssueIds.has(node.id),
+      !explicitWaitingByIssueId.has(node.id),
     )
     .map((node) => node.id);
 
@@ -1410,7 +1461,7 @@ async function listIssueBlockerAttentionMap(
       node,
       latestRun: latestRunByIssueId.get(nodeId) ?? null,
       hasActivePath: activeIssueIds.has(nodeId),
-      hasWaitingPath: explicitWaitingIssueIds.has(nodeId),
+      hasWaitingPath: explicitWaitingByIssueId.has(nodeId),
       hasProductivityReview: productivityReviewIssueIds.has(nodeId),
       agentInvokable,
       maxContinuationAttempts: BLOCKER_ATTENTION_DEFAULT_MAX_CONTINUATION_ATTEMPTS,
@@ -1420,27 +1471,37 @@ async function listIssueBlockerAttentionMap(
 
   type PathClassification = {
     covered: boolean;
+    coveredReason: IssueBlockerAttentionReason | null;
     stalled: boolean;
     sampleBlockerIdentifier: string | null;
     sampleStalledBlockerIdentifier: string | null;
     recoveryLeafIdentifier: string | null;
     recovery: LeafRecoveryClassification | null;
+    waitingPath: IssueBlockerExplicitWaitingPath | null;
   };
   const emptyPath = (sample: string | null): PathClassification => ({
     covered: false,
+    coveredReason: null,
     stalled: false,
     sampleBlockerIdentifier: sample,
     sampleStalledBlockerIdentifier: null,
     recoveryLeafIdentifier: null,
     recovery: null,
+    waitingPath: null,
   });
-  const coveredPath = (sample: string | null): PathClassification => ({
+  const coveredPath = (
+    sample: string | null,
+    coveredReason: IssueBlockerAttentionReason = null,
+    waitingPath: IssueBlockerExplicitWaitingPath | null = null,
+  ): PathClassification => ({
     covered: true,
+    coveredReason,
     stalled: false,
     sampleBlockerIdentifier: sample,
     sampleStalledBlockerIdentifier: null,
     recoveryLeafIdentifier: null,
     recovery: null,
+    waitingPath,
   });
   const classifyPath = (
     nodeId: string,
@@ -1458,18 +1519,23 @@ async function listIssueBlockerAttentionMap(
     if (node.status === "done") {
       return coveredPath(nodeSample);
     }
+    const explicitWaitingPath = explicitWaitingByIssueId.get(node.id) ?? null;
+    if (explicitWaitingPath) {
+      return coveredPath(nodeSample, "explicit_waiting", explicitWaitingPath);
+    }
     if (node.status === "in_review") {
-      const hasWaitingPath = activeIssueIds.has(node.id) || Boolean(node.assigneeUserId) || explicitWaitingIssueIds.has(node.id);
-      if (hasWaitingPath) {
+      if (activeIssueIds.has(node.id)) {
         return coveredPath(nodeSample);
       }
       return {
         covered: false,
+        coveredReason: null,
         stalled: true,
         sampleBlockerIdentifier: nodeSample,
         sampleStalledBlockerIdentifier: nodeSample,
         recoveryLeafIdentifier: null,
         recovery: null,
+        waitingPath: null,
       };
     }
     if (activeIssueIds.has(node.id)) {
@@ -1489,45 +1555,55 @@ async function listIssueBlockerAttentionMap(
       const recoveryChild = classified.find((result) => result.recovery && result.recoveryLeafIdentifier);
       const recoveryLeafIdentifier = recoveryChild?.recoveryLeafIdentifier ?? null;
       const recovery = recoveryChild?.recovery ?? null;
+      const waitingEntry = classified.find((result) => result.coveredReason === "explicit_waiting" && result.waitingPath);
+      const waitingPath = waitingEntry?.waitingPath ?? null;
       const hardAttention = classified.find((result) => !result.covered && !result.stalled && !result.recovery);
       if (hardAttention) {
         return {
           covered: false,
+          coveredReason: null,
           stalled: false,
           sampleBlockerIdentifier: hardAttention.sampleBlockerIdentifier,
           sampleStalledBlockerIdentifier: sampleStalled,
           recoveryLeafIdentifier,
           recovery,
+          waitingPath,
         };
       }
       if (recoveryChild) {
         return {
           covered: false,
+          coveredReason: null,
           stalled: false,
           sampleBlockerIdentifier: recoveryLeafIdentifier ?? recoveryChild.sampleBlockerIdentifier,
           sampleStalledBlockerIdentifier: sampleStalled,
           recoveryLeafIdentifier,
           recovery,
+          waitingPath,
         };
       }
       const stalledEntry = classified.find((result) => result.stalled);
       if (stalledEntry) {
         return {
           covered: false,
+          coveredReason: null,
           stalled: true,
           sampleBlockerIdentifier: stalledEntry.sampleBlockerIdentifier,
           sampleStalledBlockerIdentifier: sampleStalled,
           recoveryLeafIdentifier: null,
           recovery: null,
+          waitingPath,
         };
       }
       return {
         covered: true,
+        coveredReason: waitingPath ? "explicit_waiting" : null,
         stalled: false,
-        sampleBlockerIdentifier: classified[0]?.sampleBlockerIdentifier ?? nodeSample,
+        sampleBlockerIdentifier: waitingEntry?.sampleBlockerIdentifier ?? classified[0]?.sampleBlockerIdentifier ?? nodeSample,
         sampleStalledBlockerIdentifier: null,
         recoveryLeafIdentifier: null,
         recovery: null,
+        waitingPath,
       };
     }
 
@@ -1535,11 +1611,13 @@ async function listIssueBlockerAttentionMap(
     if (recovery) {
       return {
         covered: false,
+        coveredReason: null,
         stalled: false,
         sampleBlockerIdentifier: nodeSample,
         sampleStalledBlockerIdentifier: null,
         recoveryLeafIdentifier: nodeSample,
         recovery,
+        waitingPath: null,
       };
     }
 
@@ -1556,9 +1634,13 @@ async function listIssueBlockerAttentionMap(
   for (const root of roots) {
     const topLevelEdges = (edgesByIssueId.get(root.id) ?? []).filter((edge) => nodesById.get(edge.blockerIssueId)?.status !== "done");
     if (topLevelEdges.length === 0) {
+      const waitingPath = explicitWaitingByIssueId.get(root.id) ?? null;
       attentionMap.set(root.id, createIssueBlockerAttention({
-        state: "needs_attention",
-        reason: "attention_required",
+        state: waitingPath ? "covered" : "needs_attention",
+        reason: waitingPath ? "explicit_waiting" : "attention_required",
+        sampleBlockerIdentifier: waitingPath ? blockerSampleIdentifier(nodesById.get(root.id)) : null,
+        nextActionOwner: waitingPath?.owner ?? null,
+        nextActionHint: waitingPath?.hint ?? null,
       }));
       continue;
     }
@@ -1574,6 +1656,7 @@ async function listIssueBlockerAttentionMap(
     const attentionBlockerCount = classified.length - coveredBlockerCount - stalledBlockerCount - recoveryBlockerCount;
     const hardAttentionEntry = classified.find((entry) => !entry.result.covered && !entry.result.stalled && !entry.result.recovery);
     const stalledEntry = classified.find((entry) => entry.result.stalled);
+    const waitingEntry = classified.find((entry) => entry.result.coveredReason === "explicit_waiting" && entry.result.waitingPath);
     const sampleEntry = hardAttentionEntry ?? recoveryEntry ?? stalledEntry ?? classified[0] ?? null;
     const sampleNode = sampleEntry ? nodesById.get(sampleEntry.edge.blockerIssueId) : null;
     const sampleStalledFromChain = classified
@@ -1602,9 +1685,14 @@ async function listIssueBlockerAttentionMap(
       reason = "stalled_review";
     } else {
       state = "covered";
-      reason = topLevelEdges.every((edge) => nodesById.get(edge.blockerIssueId)?.parentId === root.id)
-        ? "active_child"
-        : "active_dependency";
+      reason = waitingEntry
+        ? "explicit_waiting"
+        : topLevelEdges.every((edge) => nodesById.get(edge.blockerIssueId)?.parentId === root.id)
+          ? "active_child"
+          : "active_dependency";
+      nextActionOwner = waitingEntry?.result.waitingPath?.owner ?? null;
+      nextActionHint = waitingEntry?.result.waitingPath?.hint ?? null;
+      sampleBlockerIdentifier = waitingEntry?.result.sampleBlockerIdentifier ?? sampleBlockerIdentifier;
     }
 
     attentionMap.set(root.id, createIssueBlockerAttention({
@@ -1626,6 +1714,17 @@ async function listIssueBlockerAttentionMap(
   // gets its own recovery_needed surface (e.g. opening the leaf directly from
   // an inbox wake).
   for (const seed of recoverySeedRows) {
+    const waitingPath = explicitWaitingByIssueId.get(seed.id) ?? null;
+    if (waitingPath) {
+      attentionMap.set(seed.id, createIssueBlockerAttention({
+        state: "covered",
+        reason: "explicit_waiting",
+        sampleBlockerIdentifier: blockerSampleIdentifier(nodesById.get(seed.id)) ?? seed.identifier ?? seed.id,
+        nextActionOwner: waitingPath.owner,
+        nextActionHint: waitingPath.hint,
+      }));
+      continue;
+    }
     const recovery = leafRecoveryByNodeId.get(seed.id);
     if (!recovery) continue;
     attentionMap.set(seed.id, createIssueBlockerAttention({

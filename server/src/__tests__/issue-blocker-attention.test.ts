@@ -4,10 +4,13 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   agents,
   agentWakeupRequests,
+  approvals,
   companies,
   createDb,
   heartbeatRuns,
+  issueApprovals,
   issueRelations,
+  issueThreadInteractions,
   issues,
 } from "@paperclipai/db";
 import {
@@ -39,6 +42,9 @@ describeEmbeddedPostgres("issue blocker attention", () => {
   afterEach(async () => {
     await db.delete(heartbeatRuns);
     await db.delete(agentWakeupRequests);
+    await db.delete(issueThreadInteractions);
+    await db.delete(issueApprovals);
+    await db.delete(approvals);
     await db.delete(issueRelations);
     await db.delete(issues);
     await db.delete(agents);
@@ -113,6 +119,34 @@ describeEmbeddedPostgres("issue blocker attention", () => {
       await db.update(issues).set({ executionRunId: runId }).where(eq(issues.id, input.issueId));
     }
     return runId;
+  }
+
+  async function pendingInteraction(input: { companyId: string; issueId: string; kind?: "request_confirmation" | "ask_user_questions" }) {
+    await db.insert(issueThreadInteractions).values({
+      companyId: input.companyId,
+      issueId: input.issueId,
+      kind: input.kind ?? "request_confirmation",
+      status: "pending",
+      payload: {},
+    });
+  }
+
+  async function linkedPendingApproval(input: { companyId: string; issueId: string; agentId: string }) {
+    const approvalId = randomUUID();
+    await db.insert(approvals).values({
+      id: approvalId,
+      companyId: input.companyId,
+      type: "request_board_approval",
+      requestedByAgentId: input.agentId,
+      status: "pending",
+      payload: {},
+    });
+    await db.insert(issueApprovals).values({
+      companyId: input.companyId,
+      issueId: input.issueId,
+      approvalId,
+      linkedByAgentId: input.agentId,
+    });
   }
 
   it("classifies a blocked parent as covered when its child has a running execution path", async () => {
@@ -409,6 +443,66 @@ describeEmbeddedPostgres("issue blocker attention", () => {
       nextActionHint: "wake_to_continue",
     });
     expect(leaf?.blockerAttention?.nextActionOwner).toMatchObject({ type: "agent", agentId });
+  });
+
+  it("treats a pending plan confirmation on an in-progress leaf as explicit waiting instead of recovery", async () => {
+    const { companyId, agentId } = await createCompany("PRW");
+    const parentId = await insertIssue({ companyId, identifier: "PRW-1", title: "Parent", status: "blocked" });
+    const leafId = await insertIssue({
+      companyId,
+      identifier: "PRW-2",
+      title: "Plan confirmation leaf",
+      status: "in_progress",
+      assigneeAgentId: agentId,
+    });
+    await block({ companyId, blockerIssueId: leafId, blockedIssueId: parentId });
+    await recordedRun({ companyId, agentId, issueId: leafId, livenessState: "advanced" });
+    await pendingInteraction({ companyId, issueId: leafId, kind: "request_confirmation" });
+
+    const issuesList = await svc.list(companyId, { status: "blocked,in_progress" });
+    const parent = issuesList.find((issue) => issue.id === parentId);
+    const leaf = issuesList.find((issue) => issue.id === leafId);
+
+    expect(parent?.blockerAttention).toMatchObject({
+      state: "covered",
+      reason: "explicit_waiting",
+      coveredBlockerCount: 1,
+      sampleBlockerIdentifier: "PRW-2",
+      nextActionHint: "needs_human_review",
+    });
+    expect(parent?.blockerAttention?.nextActionOwner).toMatchObject({ type: "user" });
+    expect(leaf?.blockerAttention).toMatchObject({
+      state: "covered",
+      reason: "explicit_waiting",
+      sampleBlockerIdentifier: "PRW-2",
+      nextActionHint: "needs_human_review",
+    });
+    expect(leaf?.blockerAttention?.nextActionOwner).toMatchObject({ type: "user" });
+  });
+
+  it("treats linked pending approvals on blocked leaves as explicit waiting", async () => {
+    const { companyId, agentId } = await createCompany("PRA");
+    const parentId = await insertIssue({ companyId, identifier: "PRA-1", title: "Parent", status: "blocked" });
+    const leafId = await insertIssue({
+      companyId,
+      identifier: "PRA-2",
+      title: "Approval leaf",
+      status: "blocked",
+      assigneeAgentId: agentId,
+    });
+    await block({ companyId, blockerIssueId: leafId, blockedIssueId: parentId });
+    await linkedPendingApproval({ companyId, issueId: leafId, agentId });
+
+    const parent = (await svc.list(companyId, { status: "blocked" })).find((issue) => issue.id === parentId);
+
+    expect(parent?.blockerAttention).toMatchObject({
+      state: "covered",
+      reason: "explicit_waiting",
+      coveredBlockerCount: 1,
+      sampleBlockerIdentifier: "PRA-2",
+      nextActionHint: "needs_human_review",
+    });
+    expect(parent?.blockerAttention?.nextActionOwner).toMatchObject({ type: "user" });
   });
 
   it("escalates to continuation_exhausted when the latest run already used its bounded continuations", async () => {

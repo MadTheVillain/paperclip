@@ -19,6 +19,7 @@ import {
   issueComments,
   issueDocuments,
   issueRelations,
+  issueThreadInteractions,
   issueTreeHoldMembers,
   issueTreeHolds,
   issues,
@@ -310,6 +311,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     await db.delete(companySkills);
     await db.delete(costEvents);
     await db.delete(issueComments);
+    await db.delete(issueThreadInteractions);
     await db.delete(issueDocuments);
     await db.delete(documentRevisions);
     await db.delete(documents);
@@ -318,6 +320,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     await db.delete(issueTreeHolds);
     for (let attempt = 0; attempt < 5; attempt += 1) {
       await db.delete(issueComments);
+      await db.delete(issueThreadInteractions);
       await db.delete(issueDocuments);
       try {
         await db.delete(issues);
@@ -2383,6 +2386,49 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     const refreshedIssue = await db.select().from(issues).where(eq(issues.id, issueId)).then((rows) => rows[0] ?? null);
     expect(refreshedIssue?.status).toBe("in_progress");
     expect(refreshedIssue?.assigneeAgentId).toBe(agentId);
+  });
+
+  it("suppresses bounded liveness continuation wakes when the issue has a pending confirmation", async () => {
+    const { companyId, agentId, issueId, runId } = await seedStrandedIssueFixture({
+      status: "in_progress",
+      runStatus: "succeeded",
+      livenessState: "plan_only",
+      livenessReason: "Run produced a plan and needs approval",
+      nextAction: "Wait for the board to confirm the plan.",
+    });
+    await db.insert(issueThreadInteractions).values({
+      companyId,
+      issueId,
+      kind: "request_confirmation",
+      status: "pending",
+      payload: {},
+      createdByAgentId: agentId,
+      sourceRunId: runId,
+    });
+    const heartbeat = heartbeatService(db);
+
+    const sourceRun = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId))
+      .then((rows) => rows[0] ?? null);
+    if (!sourceRun) throw new Error("Expected source run");
+
+    await heartbeat.handleRunLivenessContinuationForTest(sourceRun);
+
+    const wakeups = await db
+      .select()
+      .from(agentWakeupRequests)
+      .where(and(eq(agentWakeupRequests.companyId, companyId), eq(agentWakeupRequests.reason, "run_liveness_continuation")));
+    expect(wakeups).toHaveLength(0);
+
+    const refreshedRun = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId))
+      .then((rows) => rows[0] ?? null);
+    expect(refreshedRun?.continuationAttempt).toBe(0);
+    expect(refreshedRun?.livenessReason).toContain("continuation suppressed by explicit interaction or approval wait");
   });
 
   it("queues a bounded liveness continuation when no pause hold suppresses it", async () => {
