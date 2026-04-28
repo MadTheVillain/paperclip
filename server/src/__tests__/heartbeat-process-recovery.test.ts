@@ -1419,6 +1419,59 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     }
   });
 
+  it.each([
+    ["failed", "adapter_failed"],
+    ["failed", "process_lost"],
+    ["timed_out", "adapter_timed_out"],
+  ] as const)(
+    "re-enqueues stranded in-progress work after a %s/%s run before escalating",
+    async (runStatus, runErrorCode) => {
+      const { companyId, agentId, issueId, runId } = await seedStrandedIssueFixture({
+        status: "in_progress",
+        runStatus,
+        runErrorCode,
+      });
+      const heartbeat = heartbeatService(db);
+
+      const result = await heartbeat.reconcileStrandedAssignedIssues();
+      expect(result.dispatchRequeued).toBe(0);
+      expect(result.continuationRequeued).toBe(1);
+      expect(result.escalated).toBe(0);
+      expect(result.issueIds).toEqual([issueId]);
+
+      const runs = await db
+        .select()
+        .from(heartbeatRuns)
+        .where(eq(heartbeatRuns.agentId, agentId));
+      expect(runs).toHaveLength(2);
+
+      const retryRun = runs.find((row) => row.id !== runId);
+      expect(retryRun?.contextSnapshot as Record<string, unknown> | undefined).toMatchObject({
+        issueId,
+        taskId: issueId,
+        retryReason: "issue_continuation_needed",
+        retryOfRunId: runId,
+        source: "issue.continuation_recovery",
+      });
+
+      const recoveries = await db
+        .select()
+        .from(issues)
+        .where(
+          and(
+            eq(issues.companyId, companyId),
+            eq(issues.originKind, "stranded_issue_recovery"),
+            eq(issues.originId, issueId),
+          ),
+        );
+      expect(recoveries).toHaveLength(0);
+
+      if (retryRun?.id) {
+        await waitForRunToSettle(heartbeat, retryRun.id);
+      }
+    },
+  );
+
   it("blocks assigned todo work after the one automatic dispatch recovery was already used", async () => {
     const { companyId, agentId, issueId, runId } = await seedStrandedIssueFixture({
       status: "todo",
