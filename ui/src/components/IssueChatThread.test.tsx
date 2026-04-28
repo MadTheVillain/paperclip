@@ -17,6 +17,13 @@ import type {
   RequestConfirmationInteraction,
   SuggestTasksInteraction,
 } from "../lib/issue-thread-interactions";
+import {
+  issueChatLongThreadAgentMap,
+  issueChatLongThreadComments,
+  issueChatLongThreadEvents,
+  issueChatLongThreadLinkedRuns,
+  issueChatLongThreadTranscriptsByRunId,
+} from "../fixtures/issueChatLongThreadFixture";
 
 const { markdownEditorFocusMock } = vi.hoisted(() => ({
   markdownEditorFocusMock: vi.fn(),
@@ -312,6 +319,39 @@ describe("IssueChatThread", () => {
     expect(viewport).not.toBeNull();
     expect(viewport?.className).not.toContain("overflow-y-auto");
     expect(viewport?.className).not.toContain("max-h-[70vh]");
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it("mounts one measurable row per merged long-thread message", () => {
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <MemoryRouter>
+          <IssueChatThread
+            comments={issueChatLongThreadComments}
+            linkedRuns={issueChatLongThreadLinkedRuns}
+            timelineEvents={issueChatLongThreadEvents}
+            liveRuns={[]}
+            agentMap={issueChatLongThreadAgentMap}
+            currentUserId="user-board"
+            onAdd={async () => {}}
+            showComposer={false}
+            showJumpToLatest={false}
+            enableLiveTranscriptPolling={false}
+            transcriptsByRunId={issueChatLongThreadTranscriptsByRunId}
+            hasOutputForRun={(runId) => issueChatLongThreadTranscriptsByRunId.has(runId)}
+          />
+        </MemoryRouter>,
+      );
+    });
+
+    const rows = container.querySelectorAll('[data-testid="issue-chat-message-row"]');
+    expect(rows.length).toBeGreaterThanOrEqual(450);
+    expect(container.querySelectorAll('[data-message-role="assistant"]').length).toBeGreaterThanOrEqual(150);
 
     act(() => {
       root.unmount();

@@ -2798,13 +2798,23 @@ export function IssueChatThread({
                 // index-scoped message providers; live transcripts can shrink
                 // or regroup while the runtime still holds stale indices.
                 messages.map((message) => {
-                  if (message.role === "user") {
-                    return <IssueChatUserMessage key={message.id} message={message} />;
-                  }
-                  if (message.role === "assistant") {
-                    return <IssueChatAssistantMessage key={message.id} message={message} />;
-                  }
-                  return <IssueChatSystemMessage key={message.id} message={message} />;
+                  const custom = message.metadata?.custom as Record<string, unknown> | undefined;
+                  const kind = typeof custom?.kind === "string" ? custom.kind : message.role;
+                  const renderedMessage = message.role === "user"
+                    ? <IssueChatUserMessage message={message} />
+                    : message.role === "assistant"
+                      ? <IssueChatAssistantMessage message={message} />
+                      : <IssueChatSystemMessage message={message} />;
+                  return (
+                    <div
+                      key={message.id}
+                      data-testid="issue-chat-message-row"
+                      data-message-role={message.role}
+                      data-message-kind={kind}
+                    >
+                      {renderedMessage}
+                    </div>
+                  );
                 })
               )}
               {showComposer ? (
