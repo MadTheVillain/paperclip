@@ -449,6 +449,8 @@
   line-height: 1.25;
   text-decoration: none;
   vertical-align: middle;
+  position: relative;
+  top: -1px;
   white-space: nowrap;
   user-select: none;
 }
@@ -868,8 +870,11 @@ span.paperclip-project-mention-chip {
   text-decoration: none;
   /* Center the pill on the surrounding x-height so it sits on the text line
      instead of hanging below it. inline-flex baseline alignment is unreliable
-     across browsers, so use vertical-align: middle for a predictable result. */
+     across browsers, so use vertical-align: middle for a predictable result.
+     Nudge up 1px so it visually centers with the cap height of the text. */
   vertical-align: middle;
+  position: relative;
+  top: -1px;
   white-space: nowrap;
 }
 
