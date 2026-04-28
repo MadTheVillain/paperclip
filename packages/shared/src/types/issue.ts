@@ -119,13 +119,37 @@ export interface IssueRelationIssueSummary {
   terminalBlockers?: IssueRelationIssueSummary[];
 }
 
-export type IssueBlockerAttentionState = "none" | "covered" | "stalled" | "needs_attention";
+export type IssueBlockerAttentionState =
+  | "none"
+  | "covered"
+  | "stalled"
+  | "needs_attention"
+  | "recovery_needed";
 
 export type IssueBlockerAttentionReason =
   | "active_child"
   | "active_dependency"
   | "stalled_review"
   | "attention_required"
+  | "explicit_waiting"
+  | "productive_run_stopped"
+  | "continuation_exhausted"
+  | "continuation_suppressed"
+  | null;
+
+export type IssueBlockerNextActionOwnerType = "agent" | "user" | "none";
+
+export interface IssueBlockerNextActionOwner {
+  type: IssueBlockerNextActionOwnerType;
+  agentId?: string | null;
+  userId?: string | null;
+}
+
+export type IssueBlockerNextActionHint =
+  | "wake_to_continue"
+  | "needs_human_review"
+  | "create_recovery_issue"
+  | "reassign"
   | null;
 
 export interface IssueBlockerAttention {
@@ -137,6 +161,8 @@ export interface IssueBlockerAttention {
   attentionBlockerCount: number;
   sampleBlockerIdentifier: string | null;
   sampleStalledBlockerIdentifier: string | null;
+  nextActionOwner: IssueBlockerNextActionOwner | null;
+  nextActionHint: IssueBlockerNextActionHint;
 }
 
 export type IssueProductivityReviewTrigger =
