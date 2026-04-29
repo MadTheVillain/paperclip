@@ -15,6 +15,7 @@ import type { Goal } from "./goal.js";
 import type { Project, ProjectWorkspace } from "./project.js";
 import type { ExecutionWorkspace, IssueExecutionWorkspaceSettings } from "./workspace-runtime.js";
 import type { IssueWorkProduct } from "./work-product.js";
+import type { IssueExecutionDisposition } from "./issue-execution-disposition.js";
 
 export interface IssueAncestorProject {
   id: string;
@@ -306,6 +307,7 @@ export interface Issue {
   blockedBy?: IssueRelationIssueSummary[];
   blocks?: IssueRelationIssueSummary[];
   blockerAttention?: IssueBlockerAttention;
+  executionDisposition?: IssueExecutionDisposition;
   productivityReview?: IssueProductivityReview | null;
   relatedWork?: IssueRelatedWorkSummary;
   referencedIssueIdentifiers?: string[];

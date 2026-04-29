@@ -1113,6 +1113,21 @@ export function issueRoutes(
         documentsSvc.getIssueDocumentByKey(issue.id, ISSUE_CONTINUATION_SUMMARY_DOCUMENT_KEY),
         currentExecutionWorkspacePromise,
       ]);
+    const executionDisposition = await svc
+      .listExecutionDispositions(issue.companyId, [
+        {
+          id: issue.id,
+          companyId: issue.companyId,
+          status: issue.status,
+          assigneeAgentId: issue.assigneeAgentId,
+          assigneeUserId: issue.assigneeUserId,
+          originKind: issue.originKind ?? null,
+          executionRunId: issue.executionRunId ?? null,
+          executionState: issue.executionState ?? null,
+          blockedBy: relations.blockedBy,
+        },
+      ])
+      .then((map) => map.get(issue.id) ?? null);
 
     res.json({
       issue: {
@@ -1122,6 +1137,7 @@ export function issueRoutes(
         description: issue.description,
         status: issue.status,
         ...(blockerAttention ? { blockerAttention } : {}),
+        ...(executionDisposition ? { executionDisposition } : {}),
         productivityReview,
         priority: issue.priority,
         projectId: issue.projectId,
@@ -1220,11 +1236,27 @@ export function issueRoutes(
       ? await executionWorkspacesSvc.getById(issue.executionWorkspaceId)
       : null;
     const workProducts = await workProductsSvc.listForIssue(issue.id);
+    const executionDisposition = await svc
+      .listExecutionDispositions(issue.companyId, [
+        {
+          id: issue.id,
+          companyId: issue.companyId,
+          status: issue.status,
+          assigneeAgentId: issue.assigneeAgentId,
+          assigneeUserId: issue.assigneeUserId,
+          originKind: issue.originKind ?? null,
+          executionRunId: issue.executionRunId ?? null,
+          executionState: issue.executionState ?? null,
+          blockedBy: relations.blockedBy,
+        },
+      ])
+      .then((map) => map.get(issue.id) ?? null);
     res.json({
       ...issue,
       goalId: goal?.id ?? issue.goalId,
       ancestors,
       ...(blockerAttention ? { blockerAttention } : {}),
+      ...(executionDisposition ? { executionDisposition } : {}),
       productivityReview,
       blockedBy: relations.blockedBy,
       blocks: relations.blocks,

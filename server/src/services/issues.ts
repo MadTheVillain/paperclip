@@ -64,6 +64,11 @@ import {
   classifyIssueExecutionDisposition,
   type IssueExecutionRunLivenessState,
 } from "./issue-execution-disposition.js";
+import {
+  backfillBlockedBySummaries,
+  listIssueExecutionDispositionsMap,
+  type IssueExecutionDispositionInputNode,
+} from "./issue-execution-disposition-resolver.js";
 import { assertIssueTransitionAllowed } from "./issue-transition-guard.js";
 
 const ALL_ISSUE_STATUSES = ["backlog", "todo", "in_progress", "in_review", "blocked", "done", "cancelled"];
@@ -2703,6 +2708,23 @@ export function issueService(db: Db) {
         listIssueBlockerAttentionMap(db, companyId, withRuns),
         listIssueProductivityReviewMap(db, companyId, issueIds),
       ]);
+      const dispositionInputs: IssueExecutionDispositionInputNode[] = withRuns.map((row) => ({
+        id: row.id,
+        companyId: row.companyId,
+        status: row.status,
+        assigneeAgentId: row.assigneeAgentId,
+        assigneeUserId: row.assigneeUserId,
+        originKind: row.originKind ?? null,
+        executionRunId: row.executionRunId ?? null,
+        // executionState is intentionally omitted from the list select; the resolver rehydrates it.
+        blockedBy: includeBlockedBy ? blockedByMap.get(row.id) ?? [] : undefined,
+      }));
+      await backfillBlockedBySummaries(db, companyId, dispositionInputs);
+      const dispositionByIssueId = await listIssueExecutionDispositionsMap(
+        db,
+        companyId,
+        dispositionInputs,
+      );
 
       if (!contextUserId) {
         return withRuns.map((row) => {
@@ -2717,6 +2739,7 @@ export function issueService(db: Db) {
             ...(includeBlockedBy ? { blockedBy: blockedByMap.get(row.id) ?? [] } : {}),
             lastActivityAt,
             ...(blockerAttentionByIssueId.has(row.id) ? { blockerAttention: blockerAttentionByIssueId.get(row.id) } : {}),
+            ...(dispositionByIssueId.has(row.id) ? { executionDisposition: dispositionByIssueId.get(row.id) } : {}),
             ...(productivityReviewByIssueId.has(row.id)
               ? { productivityReview: productivityReviewByIssueId.get(row.id) }
               : {}),
@@ -2738,6 +2761,7 @@ export function issueService(db: Db) {
           ...(includeBlockedBy ? { blockedBy: blockedByMap.get(row.id) ?? [] } : {}),
           lastActivityAt,
           ...(blockerAttentionByIssueId.has(row.id) ? { blockerAttention: blockerAttentionByIssueId.get(row.id) } : {}),
+          ...(dispositionByIssueId.has(row.id) ? { executionDisposition: dispositionByIssueId.get(row.id) } : {}),
           ...(productivityReviewByIssueId.has(row.id)
             ? { productivityReview: productivityReviewByIssueId.get(row.id) }
             : {}),
@@ -2890,6 +2914,16 @@ export function issueService(db: Db) {
       dbOrTx: any = db,
     ) => {
       return listIssueBlockerAttentionMap(dbOrTx, companyId, issueRows);
+    },
+
+    listExecutionDispositions: async (
+      companyId: string,
+      issueRows: IssueExecutionDispositionInputNode[],
+      dbOrTx: any = db,
+    ) => {
+      const inputs = issueRows.map((row) => ({ ...row }));
+      await backfillBlockedBySummaries(dbOrTx, companyId, inputs);
+      return listIssueExecutionDispositionsMap(dbOrTx, companyId, inputs);
     },
 
     listProductivityReviews: async (
