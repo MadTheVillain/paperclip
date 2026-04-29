@@ -11,6 +11,8 @@ type IssueSummary = {
   identifier?: string | null;
   title: string;
   status: IssueStatus;
+  createdAt?: string | Date | null;
+  updatedAt?: string | Date | null;
   assigneeAgentId?: string | null;
   assigneeUserId?: string | null;
   executionDisposition?: { kind: string } | InvalidDisposition;
@@ -44,6 +46,7 @@ type PreviewGroup = {
 
 const NON_TERMINAL_STATUSES = ["backlog", "todo", "in_progress", "in_review", "blocked"] as const;
 const PAGE_LIMIT = 1000;
+const DEFAULT_LOOKBACK_HOURS = 48;
 
 function readFlag(name: string): string | null {
   const index = process.argv.indexOf(name);
@@ -58,6 +61,35 @@ function requireConfig(name: string, value: string | null | undefined): string {
     throw new Error(`${name} is required`);
   }
   return trimmed;
+}
+
+function readPositiveIntegerFlag(name: string): number | null {
+  const raw = readFlag(name);
+  if (raw === null) return null;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(`${name} must be a positive integer`);
+  }
+  return value;
+}
+
+function dateValue(value: string | Date | null | undefined): Date | null {
+  if (!value) return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function issueScopeTimestamp(issue: IssueSummary): Date | null {
+  return dateValue(issue.updatedAt) ?? dateValue(issue.createdAt);
+}
+
+function filterIssuesByLookback(issues: IssueSummary[], cutoff: Date | null): IssueSummary[] {
+  if (!cutoff) return issues;
+  return issues.filter((issue) => {
+    const timestamp = issueScopeTimestamp(issue);
+    return timestamp ? timestamp >= cutoff : false;
+  });
 }
 
 function ownerKey(issue: IssueSummary): string {
@@ -231,7 +263,14 @@ function formatIssue(issue: IssueSummary): string {
   return `${issue.identifier ?? issue.id} (${issue.status}, ${ownerKey(issue)}): ${issue.title}`;
 }
 
-function printPreview(companyId: string, totalScanned: number, groups: PreviewGroup[], appliedCount: number) {
+function printPreview(
+  companyId: string,
+  totalFetched: number,
+  totalScanned: number,
+  cutoff: Date | null,
+  groups: PreviewGroup[],
+  appliedCount: number,
+) {
   const invalidCount = groups.reduce((sum, group) => sum + group.issues.length, 0);
   const safeCandidateCount = groups.reduce(
     (sum, group) => sum + group.issues.filter(hasSafeCancelledBlockerCorrection).length,
@@ -245,6 +284,8 @@ function printPreview(companyId: string, totalScanned: number, groups: PreviewGr
   console.log(`# Legacy execution-disposition reconciliation preview`);
   console.log("");
   console.log(`Company: ${companyId}`);
+  console.log(`Lookback: ${cutoff ? `updated since ${cutoff.toISOString()}` : "all non-terminal issues"}`);
+  console.log(`Non-terminal issues fetched: ${totalFetched}`);
   console.log(`Non-terminal issues scanned: ${totalScanned}`);
   console.log(`Invalid issues found: ${invalidCount}`);
   console.log(`Safe cancelled-blocker corrections available: ${safeCandidateCount}`);
@@ -312,18 +353,23 @@ async function main() {
     readFlag("--company") ?? process.env.PAPERCLIP_COMPANY_ID,
   );
   const applySafe = process.argv.includes("--apply-safe");
+  const allIssues = process.argv.includes("--all");
+  const lookbackHours = allIssues ? null : (readPositiveIntegerFlag("--since-hours") ?? DEFAULT_LOOKBACK_HOURS);
+  const cutoff = lookbackHours === null ? null : new Date(Date.now() - lookbackHours * 60 * 60 * 1000);
 
-  let issues = await listNonTerminalIssues(companyId);
+  let fetchedIssues = await listNonTerminalIssues(companyId);
+  let issues = filterIssuesByLookback(fetchedIssues, cutoff);
   let groups = buildGroups(issues);
   let appliedCount = 0;
 
   if (applySafe) {
     appliedCount = await applySafeCorrections(groups);
-    issues = await listNonTerminalIssues(companyId);
+    fetchedIssues = await listNonTerminalIssues(companyId);
+    issues = filterIssuesByLookback(fetchedIssues, cutoff);
     groups = buildGroups(issues);
   }
 
-  printPreview(companyId, issues.length, groups, appliedCount);
+  printPreview(companyId, fetchedIssues.length, issues.length, cutoff, groups, appliedCount);
 }
 
 void main().catch((error) => {
