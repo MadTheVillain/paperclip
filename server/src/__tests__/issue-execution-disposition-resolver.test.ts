@@ -82,6 +82,8 @@ describeEmbeddedPostgres("issue execution disposition resolver", () => {
     assigneeAgentId?: string | null;
     assigneeUserId?: string | null;
     originKind?: string | null;
+    originId?: string | null;
+    originFingerprint?: string | null;
   }) {
     const id = randomUUID();
     await db.insert(issues).values({
@@ -94,6 +96,8 @@ describeEmbeddedPostgres("issue execution disposition resolver", () => {
       assigneeAgentId: input.assigneeAgentId ?? null,
       assigneeUserId: input.assigneeUserId ?? null,
       originKind: input.originKind ?? "manual",
+      originId: input.originId ?? null,
+      originFingerprint: input.originFingerprint ?? "default",
     });
     return id;
   }
@@ -284,5 +288,72 @@ describeEmbeddedPostgres("issue execution disposition resolver", () => {
     // excludes it because it's not "open". So the issue ends up blocked-without-an-action-path,
     // which is also invalid. Either invalid form is acceptable here; assert the kind only.
     expect(disposition?.kind).toBe("invalid");
+  });
+
+  it("treats an open liveness escalation as a waiting path for a cancelled blocker incident", async () => {
+    const { companyId, agentId } = await seed();
+    const blockerId = await insertIssue({
+      companyId,
+      identifier: "DSP-8b",
+      title: "Cancelled blocker",
+      status: "cancelled",
+      assigneeAgentId: agentId,
+    });
+    const blockedId = await insertIssue({
+      companyId,
+      identifier: "DSP-8",
+      title: "Blocked by cancelled with escalation",
+      status: "blocked",
+      assigneeAgentId: agentId,
+    });
+    const incidentKey = [
+      "harness_liveness",
+      companyId,
+      blockedId,
+      "blocked_by_cancelled_issue",
+      blockerId,
+    ].join(":");
+    const escalationId = await insertIssue({
+      companyId,
+      identifier: "DSP-8r",
+      title: "Liveness escalation",
+      status: "todo",
+      assigneeAgentId: agentId,
+      originKind: "harness_liveness_escalation",
+      originId: incidentKey,
+      originFingerprint: [
+        "harness_liveness_leaf",
+        companyId,
+        "blocked_by_cancelled_issue",
+        blockerId,
+      ].join(":"),
+    });
+    await db.insert(issueRelations).values([
+      {
+        id: randomUUID(),
+        companyId,
+        issueId: blockerId,
+        relatedIssueId: blockedId,
+        type: "blocks",
+      },
+      {
+        id: randomUUID(),
+        companyId,
+        issueId: escalationId,
+        relatedIssueId: blockedId,
+        type: "blocks",
+      },
+    ]);
+
+    const inputs = [
+      inputFor({ id: blockedId, companyId, status: "blocked", assigneeAgentId: agentId }),
+    ];
+    await backfillBlockedBySummaries(db, companyId, inputs);
+    const map = await listIssueExecutionDispositionsMap(db, companyId, inputs);
+    const disposition = map.get(blockedId);
+    expect(disposition?.kind).toBe("waiting");
+    if (disposition?.kind === "waiting") {
+      expect(disposition.path).toBe("review_artifact");
+    }
   });
 });

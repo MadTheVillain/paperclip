@@ -19,6 +19,7 @@ import {
   isLiveExplicitApprovalWaitingPath,
   isLiveExplicitInteractionWaitingPath,
 } from "./recovery/explicit-waiting-paths.js";
+import { parseIssueGraphLivenessIncidentKey } from "./recovery/origins.js";
 import {
   classifyIssueExecutionDisposition,
   type IssueExecutionParticipantState,
@@ -310,7 +311,6 @@ export async function listIssueExecutionDispositionsMap(
   }
 
   // Open recovery / harness escalation / productivity review issues whose origin points at our inputs.
-  const recoveryOriginKinds = [STRANDED_RECOVERY_ORIGIN_KIND, HARNESS_LIVENESS_ESCALATION_ORIGIN_KIND];
   for (const part of chunk(issueIds, QUERY_CHUNK_SIZE)) {
     const rows: Array<{ originId: string | null }> = await dbOrTx
       .select({ originId: issues.originId })
@@ -318,7 +318,7 @@ export async function listIssueExecutionDispositionsMap(
       .where(
         and(
           eq(issues.companyId, companyId),
-          inArray(issues.originKind, recoveryOriginKinds),
+          eq(issues.originKind, STRANDED_RECOVERY_ORIGIN_KIND),
           isNull(issues.hiddenAt),
           inArray(issues.originId, part),
           notInArray(issues.status, [...NON_TERMINAL_RECOVERY_STATUSES]),
@@ -327,6 +327,23 @@ export async function listIssueExecutionDispositionsMap(
     for (const r of rows) {
       if (r.originId) openRecoveryIssueOrigins.add(r.originId);
     }
+  }
+  const livenessRecoveryRows: Array<{ originId: string | null }> = await dbOrTx
+    .select({ originId: issues.originId })
+    .from(issues)
+    .where(
+      and(
+        eq(issues.companyId, companyId),
+        eq(issues.originKind, HARNESS_LIVENESS_ESCALATION_ORIGIN_KIND),
+        isNull(issues.hiddenAt),
+        notInArray(issues.status, [...NON_TERMINAL_RECOVERY_STATUSES]),
+      ),
+    );
+  for (const r of livenessRecoveryRows) {
+    const parsed = parseIssueGraphLivenessIncidentKey(r.originId);
+    if (!parsed || parsed.companyId !== companyId) continue;
+    openRecoveryIssueOrigins.add(parsed.issueId);
+    openRecoveryIssueOrigins.add(parsed.leafIssueId);
   }
   for (const part of chunk(issueIds, QUERY_CHUNK_SIZE)) {
     const rows: Array<{ originId: string | null }> = await dbOrTx

@@ -60,6 +60,7 @@ import {
   isLiveExplicitApprovalWaitingPath,
   isLiveExplicitInteractionWaitingPath,
 } from "./recovery/explicit-waiting-paths.js";
+import { parseIssueGraphLivenessIncidentKey } from "./recovery/origins.js";
 import {
   classifyIssueExecutionDisposition,
   type IssueExecutionRunLivenessState,
@@ -1427,29 +1428,36 @@ async function listIssueBlockerAttentionMap(
         })));
       }
 
-      const recoveryRows: Array<{
-        originId: string | null;
-        assigneeAgentId: string | null;
-        assigneeUserId: string | null;
-      }> = await dbOrTx
-        .select({
-          originId: issues.originId,
-          assigneeAgentId: issues.assigneeAgentId,
-          assigneeUserId: issues.assigneeUserId,
-        })
-        .from(issues)
-        .where(
-          and(
-            eq(issues.companyId, companyId),
-            eq(issues.originKind, BLOCKER_ATTENTION_OPEN_RECOVERY_ORIGIN_KIND),
-            isNull(issues.hiddenAt),
-            inArray(issues.originId, chunk),
-            notInArray(issues.status, BLOCKER_ATTENTION_OPEN_RECOVERY_TERMINAL_STATUSES),
-          ),
-        );
-      for (const row of recoveryRows) {
-        setExplicitWaitingPath(row.originId, explicitWaitingPathForOwner(ownerForExplicitWait(row)));
-      }
+    }
+
+    const recoveryRows: Array<{
+      id: string;
+      originId: string | null;
+      assigneeAgentId: string | null;
+      assigneeUserId: string | null;
+    }> = await dbOrTx
+      .select({
+        id: issues.id,
+        originId: issues.originId,
+        assigneeAgentId: issues.assigneeAgentId,
+        assigneeUserId: issues.assigneeUserId,
+      })
+      .from(issues)
+      .where(
+        and(
+          eq(issues.companyId, companyId),
+          eq(issues.originKind, BLOCKER_ATTENTION_OPEN_RECOVERY_ORIGIN_KIND),
+          isNull(issues.hiddenAt),
+          notInArray(issues.status, BLOCKER_ATTENTION_OPEN_RECOVERY_TERMINAL_STATUSES),
+        ),
+      );
+    for (const row of recoveryRows) {
+      const parsed = parseIssueGraphLivenessIncidentKey(row.originId);
+      if (!parsed || parsed.companyId !== companyId) continue;
+      const waitingPath = explicitWaitingPathForOwner(ownerForExplicitWait(row));
+      setExplicitWaitingPath(row.id, waitingPath);
+      setExplicitWaitingPath(parsed.issueId, waitingPath);
+      setExplicitWaitingPath(parsed.leafIssueId, waitingPath);
     }
   }
 
