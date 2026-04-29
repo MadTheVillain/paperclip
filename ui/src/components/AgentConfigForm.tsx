@@ -1330,6 +1330,7 @@ function ModelDropdown({
   refreshingModels,
   detectModelLabel,
   emptyDetectHint,
+  defaultLabel,
 }: {
   models: AdapterModel[];
   value: string;
@@ -1347,6 +1348,7 @@ function ModelDropdown({
   refreshingModels?: boolean;
   detectModelLabel?: string;
   emptyDetectHint?: string;
+  defaultLabel?: string;
 }) {
   const [modelSearch, setModelSearch] = useState("");
   const [detectingModel, setDetectingModel] = useState(false);
@@ -1433,7 +1435,8 @@ function ModelDropdown({
             <span className={cn(!value && "text-muted-foreground")}>
               {selected
                 ? selected.label
-                : value || (allowDefault ? "Default" : required ? "Select model (required)" : "Select model")}
+                : value
+                  || (allowDefault ? (defaultLabel ?? "Default") : required ? "Select model (required)" : "Select model")}
             </span>
             <ChevronDown className="h-3 w-3 text-muted-foreground" />
           </button>
@@ -1678,6 +1681,7 @@ function CheapModelSection({
           detectedModel={null}
           detectedModelCandidates={[]}
           emptyDetectHint={placeholderHint}
+          defaultLabel={placeholderHint}
         />
       ) : null}
       {enabled && !model && adapterDefaultModel ? (
