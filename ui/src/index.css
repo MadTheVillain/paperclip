@@ -670,6 +670,53 @@ a.paperclip-mention-chip[data-mention-kind="agent"]::before {
   background: none;
 }
 
+/* Copy-to-clipboard button on fenced code blocks */
+.paperclip-markdown-codeblock {
+  position: relative;
+}
+
+.paperclip-markdown-codeblock-copy {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.4rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.2rem 0.4rem;
+  border-radius: calc(var(--radius) - 4px);
+  border: 1px solid #ffffff26;
+  background-color: #2a2a3e;
+  color: #cdd6f4;
+  font-size: 0.7rem;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease, background-color 0.12s ease, color 0.12s ease;
+}
+
+.paperclip-markdown-codeblock:hover .paperclip-markdown-codeblock-copy,
+.paperclip-markdown-codeblock-copy:focus-visible,
+.paperclip-markdown-codeblock-copy[data-copied] {
+  opacity: 1;
+}
+
+.paperclip-markdown-codeblock-copy:hover {
+  background-color: #3a3a52;
+  color: #ffffff;
+}
+
+.paperclip-markdown-codeblock-copy[data-copied] {
+  color: #a6e3a1;
+}
+
+.paperclip-markdown-codeblock-copy[data-failed] {
+  color: #f38ba8;
+}
+
+.paperclip-markdown-codeblock-copy-label {
+  font-weight: 500;
+}
+
 /* Remove backtick pseudo-elements from inline code (prose default adds them) */
 .prose code::before,
 .prose code::after {
