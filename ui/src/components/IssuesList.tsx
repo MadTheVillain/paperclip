@@ -269,6 +269,51 @@ function buildChecklistStepNumberMap(issues: Issue[], nestingEnabled: boolean): 
   return stepNumberByIssueId;
 }
 
+function buildPreviousSiblingIssueIdMap(issues: Issue[], nestingEnabled: boolean): Map<string, string> {
+  const previousSiblingByIssueId = new Map<string, string>();
+
+  if (!nestingEnabled) {
+    const previousByParentId = new Map<string, Issue>();
+    for (const issue of issues) {
+      if (!issue.parentId) continue;
+      const previousSibling = previousByParentId.get(issue.parentId);
+      if (previousSibling) {
+        previousSiblingByIssueId.set(issue.id, previousSibling.id);
+      }
+      previousByParentId.set(issue.parentId, issue);
+    }
+    return previousSiblingByIssueId;
+  }
+
+  const { roots, childMap } = buildIssueTree(issues);
+  const visit = (siblings: Issue[]) => {
+    siblings.forEach((issue, index) => {
+      const previousSibling = index > 0 ? siblings[index - 1] : null;
+      if (issue.parentId && previousSibling?.parentId === issue.parentId) {
+        previousSiblingByIssueId.set(issue.id, previousSibling.id);
+      }
+      visit(childMap.get(issue.id) ?? []);
+    });
+  };
+  visit(roots);
+
+  return previousSiblingByIssueId;
+}
+
+function shouldSuppressSinglePreviousSiblingBlockerChip(
+  issue: Issue,
+  unresolvedVisibleBlockerIds: string[],
+  previousSiblingIssueId: string | undefined,
+): boolean {
+  return Boolean(
+    issue.parentId
+      && previousSiblingIssueId
+      && (issue.blockedBy ?? []).length === 1
+      && unresolvedVisibleBlockerIds.length === 1
+      && unresolvedVisibleBlockerIds[0] === previousSiblingIssueId,
+  );
+}
+
 /* ── Component ── */
 
 interface Agent {
@@ -871,6 +916,7 @@ export function IssuesList({
 
     const visibleIssueIds = new Set(filtered.map((issue) => issue.id));
     const stepNumberByIssueId = buildChecklistStepNumberMap(filtered, viewState.nestingEnabled);
+    const previousSiblingIssueIdByIssueId = buildPreviousSiblingIssueIdMap(filtered, viewState.nestingEnabled);
     const unresolvedVisibleBlockersByIssueId = new Map<string, string[]>();
 
     filtered.forEach((issue) => {
@@ -882,7 +928,12 @@ export function IssuesList({
           if (!blockerIssue) return false;
           return blockerIssue.status !== "done" && blockerIssue.status !== "cancelled";
         });
-      unresolvedVisibleBlockersByIssueId.set(issue.id, unresolvedVisible);
+      const shouldSuppressChip = shouldSuppressSinglePreviousSiblingBlockerChip(
+        issue,
+        unresolvedVisible,
+        previousSiblingIssueIdByIssueId.get(issue.id),
+      );
+      unresolvedVisibleBlockersByIssueId.set(issue.id, shouldSuppressChip ? [] : unresolvedVisible);
     });
 
     const firstActionable = filtered.find((issue) => isActionableWorkflowStatus(issue.status)) ?? null;

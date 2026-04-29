@@ -523,6 +523,59 @@ describe("IssuesList", () => {
     });
   });
 
+  it("hides the workflow blocker chip when a sub-issue is blocked only by its previous sibling", async () => {
+    const firstChild = createIssue({
+      id: "issue-first-child",
+      identifier: "PAP-1",
+      parentId: "issue-parent",
+      title: "First child",
+      status: "todo",
+      createdAt: new Date("2026-04-01T00:00:00.000Z"),
+    });
+    const secondChild = createIssue({
+      id: "issue-second-child",
+      identifier: "PAP-2",
+      parentId: "issue-parent",
+      title: "Second child",
+      status: "blocked",
+      blockedBy: [
+        {
+          id: "issue-first-child",
+          identifier: "PAP-1",
+          title: "First child",
+          status: "todo",
+          priority: "medium",
+          assigneeAgentId: null,
+          assigneeUserId: null,
+        },
+      ],
+      createdAt: new Date("2026-04-02T00:00:00.000Z"),
+    });
+
+    const { root } = renderWithQueryClient(
+      <IssuesList
+        issues={[secondChild, firstChild]}
+        agents={[]}
+        projects={[]}
+        viewStateKey="paperclip:test-issues"
+        defaultSortField="workflow"
+        onUpdateIssue={() => undefined}
+      />,
+      container,
+    );
+
+    await waitForAssertion(() => {
+      const rows = Array.from(container.querySelectorAll('[data-testid="issue-row"]'));
+      expect(rows).toHaveLength(2);
+      expect(rows.map((row) => row.getAttribute("data-step"))).toEqual(["1", "2"]);
+      expect(container.textContent).not.toContain("blocked by PAP-1");
+    });
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
   it("collapses multiple workflow blocker chips to the first blocker and a count", async () => {
     const issueDone = createIssue({
       id: "issue-done",
