@@ -1025,7 +1025,7 @@ function IssueDetailActivityTab({
               {hasIssueTreeCost && issueTreeCostSummary ? (
                 <div className="flex flex-wrap gap-3">
                   <span className="font-medium text-foreground">
-                    Including sub-issues ${(issueTreeCostSummary.costCents / 100).toLocaleString(undefined, {
+                    Including sub-issues {(issueTreeCostSummary.costCents / 100).toLocaleString(undefined, {
                       style: "currency",
                       currency: "USD",
                       minimumFractionDigits: 4,
@@ -1688,11 +1688,11 @@ export function IssueDetail() {
     },
   });
   const pauseIssueWorkRun = useMutation({
-    mutationFn: async (runId: string) => {
+    mutationFn: async ({ runId, scope }: { runId: string; scope: "leaf" | "subtree" }) => {
       const created = await issuesApi.createTreeHold(issueId!, {
         mode: "pause",
         reason: "Paused from active run controls.",
-        releasePolicy: { strategy: "manual", note: treeControlScope === "leaf" ? "leaf_pause" : "full_pause" },
+        releasePolicy: { strategy: "manual", note: scope === "leaf" ? "leaf_pause" : "full_pause" },
         metadata: { source: "issue_active_run_control", runId },
       });
       return created;
@@ -3654,11 +3654,11 @@ export function IssueDetail() {
               onAttachImage={handleCommentAttachImage}
               onInterruptQueued={handleInterruptQueuedRun}
               onPauseWorkRun={canManageTreeControl
-                ? (runId) => pauseIssueWorkRun.mutateAsync(runId).then(() => undefined)
+                ? (runId) => pauseIssueWorkRun.mutateAsync({ runId, scope: treeControlScope }).then(() => undefined)
                 : undefined}
               onCancelQueued={handleCancelQueuedComment}
               interruptingQueuedRunId={interruptQueuedComment.isPending ? interruptQueuedComment.variables ?? null : null}
-              pausingWorkRunId={pauseIssueWorkRun.isPending ? pauseIssueWorkRun.variables ?? null : null}
+              pausingWorkRunId={pauseIssueWorkRun.isPending ? pauseIssueWorkRun.variables?.runId ?? null : null}
               onImageClick={handleChatImageClick}
               onAcceptInteraction={handleAcceptInteraction}
               onRejectInteraction={handleRejectInteraction}
