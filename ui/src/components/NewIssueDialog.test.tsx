@@ -222,6 +222,20 @@ async function flush() {
   });
 }
 
+async function waitForAssertion(assertion: () => void, attempts = 20) {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      assertion();
+      return;
+    } catch (error) {
+      lastError = error;
+      await flush();
+    }
+  }
+  throw lastError;
+}
+
 function renderDialog(container: HTMLDivElement) {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -404,7 +418,9 @@ describe("NewIssueDialog", () => {
     const submitButton = Array.from(container.querySelectorAll("button"))
       .find((button) => button.textContent?.includes("Create Issue"));
     expect(submitButton).not.toBeUndefined();
-    expect(submitButton?.hasAttribute("disabled")).toBe(false);
+    await waitForAssertion(() => {
+      expect(submitButton?.hasAttribute("disabled")).toBe(false);
+    });
 
     await act(async () => {
       submitButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));

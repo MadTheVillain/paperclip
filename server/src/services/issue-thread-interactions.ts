@@ -1148,5 +1148,60 @@ export function issueThreadInteractionService(db: Db) {
       await touchIssue(db, issue.id);
       return hydrateInteraction(updated);
     },
+
+    cancelQuestions: async (
+      issue: { id: string; companyId: string },
+      interactionId: string,
+      input: RejectIssueThreadInteraction,
+      actor: InteractionActor,
+    ) => {
+      const data = rejectIssueThreadInteractionSchema.parse(input);
+      const current = await db
+        .select()
+        .from(issueThreadInteractions)
+        .where(eq(issueThreadInteractions.id, interactionId))
+        .then((rows) => rows[0] ?? null);
+
+      if (!current) throw notFound("Interaction not found");
+      if (current.companyId !== issue.companyId || current.issueId !== issue.id) {
+        throw notFound("Interaction not found");
+      }
+      if (current.kind !== "ask_user_questions") {
+        throw unprocessable("Only ask_user_questions interactions can be cancelled");
+      }
+      if (current.status !== "pending") {
+        throw conflict("Interaction has already been resolved");
+      }
+
+      const reason = data.reason?.trim() || null;
+      const [updated] = await db
+        .update(issueThreadInteractions)
+        .set({
+          status: "cancelled",
+          result: {
+            version: 1,
+            answers: [],
+            cancelled: true,
+            cancellationReason: reason,
+            summaryMarkdown: null,
+          },
+          resolvedByAgentId: actor.agentId ?? null,
+          resolvedByUserId: actor.userId ?? null,
+          resolvedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(and(
+          eq(issueThreadInteractions.id, interactionId),
+          eq(issueThreadInteractions.status, "pending"),
+        ))
+        .returning();
+
+      if (!updated) {
+        throw conflict("Interaction has already been resolved");
+      }
+
+      await touchIssue(db, issue.id);
+      return hydrateInteraction(updated);
+    },
   };
 }

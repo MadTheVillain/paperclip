@@ -330,6 +330,8 @@ export const askUserQuestionsAnswerSchema = z.object({
 export const askUserQuestionsResultSchema = z.object({
   version: z.literal(1),
   answers: z.array(askUserQuestionsAnswerSchema).max(20),
+  cancelled: z.literal(true).optional(),
+  cancellationReason: z.string().trim().max(4000).nullable().optional(),
   summaryMarkdown: z.string().max(20000).nullable().optional(),
 });
 
