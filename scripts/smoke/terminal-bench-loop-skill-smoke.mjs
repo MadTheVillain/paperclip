@@ -91,6 +91,7 @@ async function assertLocalSkillPackage() {
     "diagnosis",
     "blockedByIssueIds",
     "PAPERCLIPAI_CMD",
+    "PAPERCLIP_HARBOR_RUNNER_CONFIG",
   ]) {
     assert(markdown.includes(expected), `Skill smoke expected ${skillPath} to mention ${expected}`);
   }
