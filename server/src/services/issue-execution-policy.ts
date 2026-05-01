@@ -62,6 +62,8 @@ const COMPLETED_STATUS: IssueExecutionState["status"] = "completed";
 const PENDING_STATUS: IssueExecutionState["status"] = "pending";
 const CHANGES_REQUESTED_STATUS: IssueExecutionState["status"] = "changes_requested";
 const MONITOR_INVALID_MESSAGE = "Monitor can only be scheduled on issues assigned to an agent in in_progress or in_review";
+const MONITOR_BOUNDS_EXHAUSTED_MESSAGE = "Monitor bounds are already exhausted";
+export const REDACTED_ISSUE_MONITOR_EXTERNAL_REF = "[redacted]";
 
 function normalizeMonitorNotes(notes: string | null | undefined) {
   if (typeof notes !== "string") return null;
@@ -75,11 +77,15 @@ function normalizeMonitorText(value: string | null | undefined) {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+export function redactIssueMonitorExternalRef(value: string | null | undefined) {
+  return normalizeMonitorText(value) ? REDACTED_ISSUE_MONITOR_EXTERNAL_REF : null;
+}
+
 function monitorMetadataFromPolicy(monitor: IssueExecutionMonitorPolicy) {
   return {
     kind: monitor.kind ?? null,
     serviceName: normalizeMonitorText(monitor.serviceName),
-    externalRef: normalizeMonitorText(monitor.externalRef),
+    externalRef: redactIssueMonitorExternalRef(monitor.externalRef),
     timeoutAt: monitor.timeoutAt ?? null,
     maxAttempts: monitor.maxAttempts ?? null,
     recoveryPolicy: monitor.recoveryPolicy ?? null,
@@ -90,7 +96,7 @@ function monitorMetadataFromState(state: IssueExecutionMonitorState | null | und
   return {
     kind: state?.kind ?? null,
     serviceName: normalizeMonitorText(state?.serviceName),
-    externalRef: normalizeMonitorText(state?.externalRef),
+    externalRef: redactIssueMonitorExternalRef(state?.externalRef),
     timeoutAt: state?.timeoutAt ?? null,
     maxAttempts: state?.maxAttempts ?? null,
     recoveryPolicy: state?.recoveryPolicy ?? null,
@@ -263,6 +269,28 @@ function monitorClearReasonForIssue(
   return null;
 }
 
+function parseMonitorDate(value: string | null | undefined) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function exhaustedMonitorClearReason(input: {
+  monitor: IssueExecutionMonitorPolicy;
+  attemptCount: number;
+  now: Date;
+}): IssueExecutionMonitorClearReason | null {
+  const timeoutAt = parseMonitorDate(input.monitor.timeoutAt ?? null);
+  if (timeoutAt && input.now.getTime() >= timeoutAt.getTime()) {
+    return "timeout_exceeded";
+  }
+  const maxAttempts = input.monitor.maxAttempts ?? null;
+  if (maxAttempts !== null && input.attemptCount >= maxAttempts) {
+    return "max_attempts_exhausted";
+  }
+  return null;
+}
+
 function nextAssigneeIds(input: {
   issue: IssueLike;
   requestedAssigneePatch: RequestedAssigneePatch;
@@ -352,7 +380,7 @@ export function normalizeIssueExecutionPolicy(input: unknown): IssueExecutionPol
       scheduledBy: parsed.data.monitor.scheduledBy,
       kind: parsed.data.monitor.kind ?? null,
       serviceName: normalizeMonitorText(parsed.data.monitor.serviceName),
-      externalRef: normalizeMonitorText(parsed.data.monitor.externalRef),
+      externalRef: redactIssueMonitorExternalRef(parsed.data.monitor.externalRef),
       timeoutAt: parsed.data.monitor.timeoutAt ?? null,
       maxAttempts: parsed.data.monitor.maxAttempts ?? null,
       recoveryPolicy: parsed.data.monitor.recoveryPolicy ?? null,
@@ -884,11 +912,30 @@ function applyMonitorTransition(input: TransitionInput, stagePatch: Record<strin
         clearedAt: new Date(),
       });
     } else {
-      patch.monitorNextCheckAt = new Date(input.policy.monitor.nextCheckAt);
-      patch.monitorWakeRequestedAt = null;
-      patch.monitorNotes = input.policy.monitor.notes ?? null;
-      patch.monitorScheduledBy = input.policy.monitor.scheduledBy;
-      targetMonitorState = buildScheduledMonitorState(currentMonitorState, input.policy.monitor);
+      const exhaustedReason = exhaustedMonitorClearReason({
+        monitor: input.policy.monitor,
+        attemptCount: currentMonitorState?.attemptCount ?? 0,
+        now: new Date(),
+      });
+      if (exhaustedReason) {
+        if (input.monitorExplicitlyUpdated) {
+          throw unprocessable(MONITOR_BOUNDS_EXHAUSTED_MESSAGE, { clearReason: exhaustedReason });
+        }
+        patch.executionPolicy = stripMonitorFromExecutionPolicy(input.policy);
+        patch.monitorNextCheckAt = null;
+        patch.monitorWakeRequestedAt = null;
+        targetMonitorState = buildClearedMonitorState({
+          previous: currentMonitorState,
+          clearReason: exhaustedReason,
+          clearedAt: new Date(),
+        });
+      } else {
+        patch.monitorNextCheckAt = new Date(input.policy.monitor.nextCheckAt);
+        patch.monitorWakeRequestedAt = null;
+        patch.monitorNotes = input.policy.monitor.notes ?? null;
+        patch.monitorScheduledBy = input.policy.monitor.scheduledBy;
+        targetMonitorState = buildScheduledMonitorState(currentMonitorState, input.policy.monitor);
+      }
     }
   } else if (previousPolicy?.monitor) {
     patch.monitorNextCheckAt = null;
@@ -919,6 +966,14 @@ export function buildInitialIssueMonitorFields(input: {
   if (!input.policy?.monitor) return {};
   if (!issueAllowsMonitor(input.status, input.assigneeAgentId ?? null, input.assigneeUserId ?? null)) {
     throw unprocessable(MONITOR_INVALID_MESSAGE);
+  }
+  const exhaustedReason = exhaustedMonitorClearReason({
+    monitor: input.policy.monitor,
+    attemptCount: 0,
+    now: new Date(),
+  });
+  if (exhaustedReason) {
+    throw unprocessable(MONITOR_BOUNDS_EXHAUSTED_MESSAGE, { clearReason: exhaustedReason });
   }
 
   const monitorState = buildScheduledMonitorState(null, input.policy.monitor);

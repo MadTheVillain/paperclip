@@ -14,6 +14,9 @@ import {
   type EnvironmentLeaseStatus,
   type ExecutionWorkspace,
   type ExecutionWorkspaceConfig,
+  type IssueExecutionMonitorClearReason,
+  type IssueExecutionMonitorPolicy,
+  type IssueExecutionMonitorRecoveryPolicy,
   type ModelProfileKey,
   type RunLivenessState,
 } from "@paperclipai/shared";
@@ -2336,11 +2339,15 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
   const issueMonitorDispatchColumns = {
     id: issues.id,
     companyId: issues.companyId,
+    projectId: issues.projectId,
+    goalId: issues.goalId,
     identifier: issues.identifier,
     title: issues.title,
     status: issues.status,
+    priority: issues.priority,
     assigneeAgentId: issues.assigneeAgentId,
     assigneeUserId: issues.assigneeUserId,
+    billingCode: issues.billingCode,
     executionPolicy: issues.executionPolicy,
     executionState: issues.executionState,
     monitorNextCheckAt: issues.monitorNextCheckAt,
@@ -2354,11 +2361,15 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
   interface IssueMonitorDispatchRow {
     id: string;
     companyId: string;
+    projectId: string | null;
+    goalId: string | null;
     identifier: string | null;
     title: string;
     status: string;
+    priority: string;
     assigneeAgentId: string | null;
     assigneeUserId: string | null;
+    billingCode: string | null;
     executionPolicy: Record<string, unknown> | null;
     executionState: Record<string, unknown> | null;
     monitorNextCheckAt: Date | null;
@@ -2367,6 +2378,319 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     monitorAttemptCount: number | null;
     monitorNotes: string | null;
     monitorScheduledBy: string | null;
+  }
+
+  function parseMonitorDate(value: string | null | undefined) {
+    if (!value) return null;
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  function issueMonitorLimitClearReason(input: {
+    monitor: IssueExecutionMonitorPolicy | null;
+    nextAttemptCount: number;
+    now: Date;
+  }): IssueExecutionMonitorClearReason | null {
+    const timeoutAt = parseMonitorDate(input.monitor?.timeoutAt ?? null);
+    if (timeoutAt && input.now.getTime() >= timeoutAt.getTime()) {
+      return "timeout_exceeded";
+    }
+    const maxAttempts = input.monitor?.maxAttempts ?? null;
+    if (maxAttempts !== null && input.nextAttemptCount > maxAttempts) {
+      return "max_attempts_exhausted";
+    }
+    return null;
+  }
+
+  function monitorRecoveryPolicy(
+    monitor: IssueExecutionMonitorPolicy | null,
+  ): IssueExecutionMonitorRecoveryPolicy {
+    return monitor?.recoveryPolicy ?? "wake_owner";
+  }
+
+  function monitorRecoveryDetails(input: {
+    claimed: IssueMonitorDispatchRow;
+    scheduledAtIso: string;
+    nextAttemptCount: number;
+    clearReason: IssueExecutionMonitorClearReason;
+    recoveryPolicy: IssueExecutionMonitorRecoveryPolicy;
+    monitor: IssueExecutionMonitorPolicy | null;
+    source: "manual" | "scheduled";
+  }) {
+    return {
+      identifier: input.claimed.identifier,
+      nextCheckAt: input.scheduledAtIso,
+      attemptedAttemptCount: input.nextAttemptCount,
+      notes: input.claimed.monitorNotes ?? null,
+      serviceName: input.monitor?.serviceName ?? null,
+      timeoutAt: input.monitor?.timeoutAt ?? null,
+      maxAttempts: input.monitor?.maxAttempts ?? null,
+      clearReason: input.clearReason,
+      recoveryPolicy: input.recoveryPolicy,
+      source: input.source,
+    };
+  }
+
+  function formatIssueIdentifierLink(identifier: string | null, fallback: string) {
+    if (!identifier) return fallback;
+    const prefix = identifier.split("-")[0];
+    if (!prefix || !/^[A-Z][A-Z0-9]*-\d+$/.test(identifier)) return identifier;
+    return `[${identifier}](/${prefix}/issues/${identifier})`;
+  }
+
+  function monitorRecoveryComment(input: {
+    issue: IssueMonitorDispatchRow;
+    clearReason: IssueExecutionMonitorClearReason;
+    recoveryPolicy: IssueExecutionMonitorRecoveryPolicy;
+    nextAttemptCount: number;
+  }) {
+    const label = formatIssueIdentifierLink(input.issue.identifier, input.issue.id);
+    const reason =
+      input.clearReason === "timeout_exceeded"
+        ? "its timeout was reached"
+        : "its maximum attempt count was reached";
+    return [
+      `Paperclip cleared the scheduled external-service monitor for ${label} because ${reason}.`,
+      "",
+      `- Attempt count: ${input.nextAttemptCount}`,
+      `- Recovery policy: ${input.recoveryPolicy}`,
+      "",
+      "Next action: inspect the external service state, record the result on this issue, and restore an explicit execution or waiting path if more work remains.",
+    ].join("\n");
+  }
+
+  async function findOpenIssueMonitorRecoveryIssue(claimed: IssueMonitorDispatchRow) {
+    return db
+      .select()
+      .from(issues)
+      .where(
+        and(
+          eq(issues.companyId, claimed.companyId),
+          eq(issues.originKind, RECOVERY_ORIGIN_KINDS.strandedIssueRecovery),
+          eq(issues.originId, claimed.id),
+          isNull(issues.hiddenAt),
+          notInArray(issues.status, ["done", "cancelled"]),
+        ),
+      )
+      .orderBy(desc(issues.createdAt))
+      .limit(1)
+      .then((rows) => rows[0] ?? null);
+  }
+
+  async function performIssueMonitorRecovery(input: {
+    claimed: IssueMonitorDispatchRow;
+    scheduledAtIso: string;
+    nextAttemptCount: number;
+    clearReason: IssueExecutionMonitorClearReason;
+    recoveryPolicy: IssueExecutionMonitorRecoveryPolicy;
+    monitor: IssueExecutionMonitorPolicy | null;
+    actorType: "user" | "agent" | "system";
+    actorId: string;
+    agentId: string | null;
+    runId: string | null;
+    activitySource: "manual" | "scheduled";
+  }) {
+    const details = monitorRecoveryDetails({
+      claimed: input.claimed,
+      scheduledAtIso: input.scheduledAtIso,
+      nextAttemptCount: input.nextAttemptCount,
+      clearReason: input.clearReason,
+      recoveryPolicy: input.recoveryPolicy,
+      monitor: input.monitor,
+      source: input.activitySource,
+    });
+
+    if (input.recoveryPolicy === "create_recovery_issue") {
+      let recoveryIssue = await findOpenIssueMonitorRecoveryIssue(input.claimed);
+      if (!recoveryIssue) {
+        recoveryIssue = await issuesSvc.create(input.claimed.companyId, {
+          title: `Recover external-service monitor for ${input.claimed.identifier ?? input.claimed.title}`,
+          description: monitorRecoveryComment({
+            issue: input.claimed,
+            clearReason: input.clearReason,
+            recoveryPolicy: input.recoveryPolicy,
+            nextAttemptCount: input.nextAttemptCount,
+          }),
+          status: "todo",
+          priority: "high",
+          parentId: input.claimed.id,
+          projectId: input.claimed.projectId,
+          goalId: input.claimed.goalId,
+          assigneeAgentId: input.claimed.assigneeAgentId,
+          originKind: RECOVERY_ORIGIN_KINDS.strandedIssueRecovery,
+          originId: input.claimed.id,
+          originFingerprint: `issue_monitor:${input.clearReason}`,
+          billingCode: input.claimed.billingCode,
+        });
+      }
+
+      if (recoveryIssue.assigneeAgentId) {
+        await enqueueWakeup(recoveryIssue.assigneeAgentId, {
+          source: "automation",
+          triggerDetail: "system",
+          reason: "issue_monitor_recovery_issue",
+          idempotencyKey: `issue-monitor-recovery-issue:${input.claimed.id}:${input.clearReason}:${input.scheduledAtIso}`,
+          payload: { issueId: recoveryIssue.id, sourceIssueId: input.claimed.id },
+          requestedByActorType: input.actorType,
+          requestedByActorId: input.actorId,
+          contextSnapshot: {
+            issueId: recoveryIssue.id,
+            sourceIssueId: input.claimed.id,
+            source: "issue.monitor.recovery_issue",
+            wakeReason: "issue_monitor_recovery_issue",
+          },
+        });
+      }
+
+      await logActivity(db, {
+        companyId: input.claimed.companyId,
+        actorType: input.actorType,
+        actorId: input.actorId,
+        agentId: input.agentId,
+        runId: input.runId,
+        action: "issue.monitor_recovery_issue_created",
+        entityType: "issue",
+        entityId: input.claimed.id,
+        details: {
+          ...details,
+          recoveryIssueId: recoveryIssue.id,
+          recoveryIdentifier: recoveryIssue.identifier,
+        },
+      });
+      return;
+    }
+
+    if (input.recoveryPolicy === "escalate_to_board") {
+      await db.insert(issueComments).values({
+        companyId: input.claimed.companyId,
+        issueId: input.claimed.id,
+        body: monitorRecoveryComment({
+          issue: input.claimed,
+          clearReason: input.clearReason,
+          recoveryPolicy: input.recoveryPolicy,
+          nextAttemptCount: input.nextAttemptCount,
+        }),
+      });
+
+      await logActivity(db, {
+        companyId: input.claimed.companyId,
+        actorType: input.actorType,
+        actorId: input.actorId,
+        agentId: input.agentId,
+        runId: input.runId,
+        action: "issue.monitor_escalated_to_board",
+        entityType: "issue",
+        entityId: input.claimed.id,
+        details,
+      });
+      return;
+    }
+
+    await enqueueWakeup(input.claimed.assigneeAgentId!, {
+      source: "automation",
+      triggerDetail: "system",
+      reason: "issue_monitor_recovery",
+      idempotencyKey: `issue-monitor-recovery:${input.claimed.id}:${input.clearReason}:${input.scheduledAtIso}`,
+      payload: {
+        issueId: input.claimed.id,
+        monitorAttemptCount: input.nextAttemptCount,
+        monitorNotes: input.claimed.monitorNotes ?? null,
+        clearReason: input.clearReason,
+        serviceName: input.monitor?.serviceName ?? null,
+        timeoutAt: input.monitor?.timeoutAt ?? null,
+        maxAttempts: input.monitor?.maxAttempts ?? null,
+      },
+      requestedByActorType: input.actorType,
+      requestedByActorId: input.actorId,
+      contextSnapshot: {
+        issueId: input.claimed.id,
+        source: "issue.monitor.recovery",
+        wakeReason: "issue_monitor_recovery",
+        monitorAttemptCount: input.nextAttemptCount,
+        monitorNotes: input.claimed.monitorNotes ?? null,
+        clearReason: input.clearReason,
+        serviceName: input.monitor?.serviceName ?? null,
+        timeoutAt: input.monitor?.timeoutAt ?? null,
+        maxAttempts: input.monitor?.maxAttempts ?? null,
+      },
+    });
+
+    await logActivity(db, {
+      companyId: input.claimed.companyId,
+      actorType: input.actorType,
+      actorId: input.actorId,
+      agentId: input.agentId,
+      runId: input.runId,
+      action: "issue.monitor_recovery_wake_queued",
+      entityType: "issue",
+      entityId: input.claimed.id,
+      details,
+    });
+  }
+
+  async function clearIssueMonitorAndRecover(input: {
+    claimed: IssueMonitorDispatchRow;
+    policy: ReturnType<typeof normalizeIssueExecutionPolicy>;
+    scheduledAtIso: string;
+    nextAttemptCount: number;
+    clearReason: IssueExecutionMonitorClearReason;
+    recoveryPolicy: IssueExecutionMonitorRecoveryPolicy;
+    monitor: IssueExecutionMonitorPolicy | null;
+    now: Date;
+    actorType: "user" | "agent" | "system";
+    actorId: string;
+    agentId: string | null;
+    runId: string | null;
+    activitySource: "manual" | "scheduled";
+  }) {
+    await db
+      .update(issues)
+      .set({
+        ...buildIssueMonitorClearedPatch({
+          issue: input.claimed,
+          policy: input.policy,
+          clearReason: input.clearReason,
+          clearedAt: input.now,
+        }),
+        updatedAt: input.now,
+      })
+      .where(eq(issues.id, input.claimed.id));
+
+    await logActivity(db, {
+      companyId: input.claimed.companyId,
+      actorType: input.actorType,
+      actorId: input.actorId,
+      agentId: input.agentId,
+      runId: input.runId,
+      action: "issue.monitor_exhausted",
+      entityType: "issue",
+      entityId: input.claimed.id,
+      details: monitorRecoveryDetails({
+        claimed: input.claimed,
+        scheduledAtIso: input.scheduledAtIso,
+        nextAttemptCount: input.nextAttemptCount,
+        clearReason: input.clearReason,
+        recoveryPolicy: input.recoveryPolicy,
+        monitor: input.monitor,
+        source: input.activitySource,
+      }),
+    });
+
+    await performIssueMonitorRecovery({
+      claimed: input.claimed,
+      scheduledAtIso: input.scheduledAtIso,
+      nextAttemptCount: input.nextAttemptCount,
+      clearReason: input.clearReason,
+      recoveryPolicy: input.recoveryPolicy,
+      monitor: input.monitor,
+      actorType: input.actorType,
+      actorId: input.actorId,
+      agentId: input.agentId,
+      runId: input.runId,
+      activitySource: input.activitySource,
+    });
+
+    return { outcome: "skipped" as const, reason: input.clearReason };
   }
 
   async function dispatchClaimedIssueMonitor(
@@ -2392,13 +2716,32 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     const nextAttemptCount = (claimed.monitorAttemptCount ?? 0) + 1;
     const policy = normalizeIssueExecutionPolicy(claimed.executionPolicy ?? null);
     const monitor = policy?.monitor ?? null;
+    const clearReason = issueMonitorLimitClearReason({ monitor, nextAttemptCount, now: input.now });
+    const recoveryPolicy = monitorRecoveryPolicy(monitor);
     const monitorMetadata = {
       serviceName: monitor?.serviceName ?? null,
-      externalRef: monitor?.externalRef ?? null,
       timeoutAt: monitor?.timeoutAt ?? null,
       maxAttempts: monitor?.maxAttempts ?? null,
       recoveryPolicy: monitor?.recoveryPolicy ?? null,
     };
+
+    if (clearReason) {
+      return clearIssueMonitorAndRecover({
+        claimed,
+        policy,
+        scheduledAtIso,
+        nextAttemptCount,
+        clearReason,
+        recoveryPolicy,
+        monitor,
+        now: input.now,
+        actorType: input.actorType,
+        actorId: input.actorId,
+        agentId: input.agentId,
+        runId: input.runId,
+        activitySource: input.activitySource,
+      });
+    }
 
     try {
       await enqueueWakeup(claimed.assigneeAgentId, {

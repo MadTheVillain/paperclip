@@ -28,7 +28,6 @@ function resolveScheduledMonitor(issue: Issue) {
     notes: issue.executionPolicy?.monitor?.notes ?? issue.monitorNotes ?? issue.executionState?.monitor?.notes ?? null,
     attemptCount: issue.monitorAttemptCount ?? issue.executionState?.monitor?.attemptCount ?? 0,
     serviceName: issue.executionPolicy?.monitor?.serviceName ?? issue.executionState?.monitor?.serviceName ?? null,
-    externalRef: issue.executionPolicy?.monitor?.externalRef ?? issue.executionState?.monitor?.externalRef ?? null,
   };
 }
 
@@ -57,9 +56,9 @@ export function IssueMonitorActivityCard({
           {monitor.notes ? (
             <div className="mt-1 text-xs text-muted-foreground">{monitor.notes}</div>
           ) : null}
-          {monitor.serviceName || monitor.externalRef ? (
+          {monitor.serviceName ? (
             <div className="mt-1 text-xs text-muted-foreground">
-              {[monitor.serviceName, monitor.externalRef].filter(Boolean).join(" - ")}
+              {monitor.serviceName}
             </div>
           ) : null}
           {monitor.attemptCount > 0 ? (

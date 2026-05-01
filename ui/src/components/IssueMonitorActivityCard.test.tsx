@@ -126,6 +126,37 @@ describe("IssueMonitorActivityCard", () => {
     act(() => root.unmount());
   });
 
+  it("does not render external references from monitor metadata", () => {
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <IssueMonitorActivityCard
+          issue={createIssue({
+            executionPolicy: {
+              mode: "normal",
+              commentRequired: true,
+              stages: [],
+              monitor: {
+                nextCheckAt: "2026-04-11T12:30:00.000Z",
+                notes: "Check deployment health",
+                scheduledBy: "board",
+                serviceName: "Deploy provider",
+                externalRef: "https://provider.example/deploy/123?token=secret",
+              },
+            },
+          })}
+        />,
+      );
+    });
+
+    expect(container.textContent).toContain("Deploy provider");
+    expect(container.textContent).not.toContain("provider.example");
+    expect(container.textContent).not.toContain("token=secret");
+
+    act(() => root.unmount());
+  });
+
   it("renders nothing when the issue has no scheduled monitor", () => {
     const root = createRoot(container);
 

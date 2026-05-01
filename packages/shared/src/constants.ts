@@ -249,6 +249,8 @@ export const ISSUE_EXECUTION_MONITOR_CLEAR_REASONS = [
   "invalid_status",
   "invalid_assignee",
   "dispatch_skipped",
+  "timeout_exceeded",
+  "max_attempts_exhausted",
 ] as const;
 export type IssueExecutionMonitorClearReason = (typeof ISSUE_EXECUTION_MONITOR_CLEAR_REASONS)[number];
 

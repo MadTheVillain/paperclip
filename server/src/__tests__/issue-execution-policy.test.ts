@@ -118,6 +118,7 @@ describe("normalizeIssueExecutionPolicy", () => {
       monitor: {
         nextCheckAt: "2026-04-11T12:30:00.000Z",
         notes: "Check deployment",
+        externalRef: "https://example.test/deploy?token=secret",
       },
       stages: [],
     });
@@ -127,6 +128,7 @@ describe("normalizeIssueExecutionPolicy", () => {
         nextCheckAt: "2026-04-11T12:30:00.000Z",
         notes: "Check deployment",
         scheduledBy: "assignee",
+        externalRef: "[redacted]",
       },
     });
   });
@@ -1409,6 +1411,39 @@ describe("issue execution policy transitions", () => {
           monitorExplicitlyUpdated: true,
         }),
       ).toThrow("Monitor can only be scheduled");
+    });
+
+    it("rejects explicitly re-arming a monitor after max attempts are exhausted", () => {
+      const policy = normalizeIssueExecutionPolicy({
+        stages: [],
+        monitor: {
+          nextCheckAt: "2099-04-11T12:30:00.000Z",
+          maxAttempts: 1,
+          scheduledBy: "assignee",
+        },
+      })!;
+
+      expect(() =>
+        applyIssueExecutionPolicyTransition({
+          issue: {
+            status: "in_review",
+            assigneeAgentId: coderAgentId,
+            assigneeUserId: null,
+            executionPolicy: null,
+            executionState: null,
+            monitorAttemptCount: 1,
+            monitorNextCheckAt: null,
+            monitorLastTriggeredAt: null,
+            monitorNotes: null,
+            monitorScheduledBy: "assignee",
+          },
+          policy,
+          previousPolicy: null,
+          requestedAssigneePatch: {},
+          actor: { agentId: coderAgentId },
+          monitorExplicitlyUpdated: true,
+        }),
+      ).toThrow("Monitor bounds are already exhausted");
     });
   });
 });

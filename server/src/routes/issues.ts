@@ -81,6 +81,7 @@ import {
   applyIssueExecutionPolicyTransition,
   normalizeIssueExecutionPolicy,
   parseIssueExecutionState,
+  redactIssueMonitorExternalRef,
   setIssueExecutionPolicyMonitorScheduledBy,
 } from "../services/issue-execution-policy.js";
 import type { PluginWorkerManager } from "../services/plugin-worker-manager.js";
@@ -204,7 +205,7 @@ function summarizeIssueMonitor(
     scheduledBy: issue.monitorScheduledBy ?? policy?.monitor?.scheduledBy ?? state?.monitor?.scheduledBy ?? null,
     kind: policy?.monitor?.kind ?? state?.monitor?.kind ?? null,
     serviceName: policy?.monitor?.serviceName ?? state?.monitor?.serviceName ?? null,
-    externalRef: policy?.monitor?.externalRef ?? state?.monitor?.externalRef ?? null,
+    externalRef: redactIssueMonitorExternalRef(policy?.monitor?.externalRef ?? state?.monitor?.externalRef ?? null),
     timeoutAt: policy?.monitor?.timeoutAt ?? state?.monitor?.timeoutAt ?? null,
     maxAttempts: policy?.monitor?.maxAttempts ?? state?.monitor?.maxAttempts ?? null,
     recoveryPolicy: policy?.monitor?.recoveryPolicy ?? state?.monitor?.recoveryPolicy ?? null,
@@ -1915,7 +1916,6 @@ export function issueRoutes(
           notes: executionPolicy.monitor.notes,
           scheduledBy: executionPolicy.monitor.scheduledBy,
           serviceName: executionPolicy.monitor.serviceName ?? null,
-          externalRef: executionPolicy.monitor.externalRef ?? null,
           timeoutAt: executionPolicy.monitor.timeoutAt ?? null,
           maxAttempts: executionPolicy.monitor.maxAttempts ?? null,
           recoveryPolicy: executionPolicy.monitor.recoveryPolicy ?? null,
@@ -1955,7 +1955,11 @@ export function issueRoutes(
     await assertIssueEnvironmentSelection(parent.companyId, req.body.executionWorkspaceSettings?.environmentId);
 
     const actor = getActorInfo(req);
-    const executionPolicy = normalizeIssueExecutionPolicy(req.body.executionPolicy);
+    const executionPolicy = applyActorMonitorScheduledBy(
+      normalizeIssueExecutionPolicy(req.body.executionPolicy),
+      actor.actorType,
+    );
+    assertCanManageIssueMonitor(req, req.body.assigneeAgentId ?? null, Boolean(executionPolicy?.monitor));
     const { issue, parentBlockerAdded } = await svc.createChild(parent.id, {
       ...req.body,
       executionPolicy,
@@ -1983,6 +1987,30 @@ export function issueRoutes(
         ...(parentBlockerAdded ? { parentBlockerAdded: true } : {}),
       },
     });
+
+    if (executionPolicy?.monitor) {
+      await logActivity(db, {
+        companyId: parent.companyId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "issue.monitor_scheduled",
+        entityType: "issue",
+        entityId: issue.id,
+        details: {
+          identifier: issue.identifier,
+          parentId: parent.id,
+          nextCheckAt: executionPolicy.monitor.nextCheckAt,
+          notes: executionPolicy.monitor.notes,
+          scheduledBy: executionPolicy.monitor.scheduledBy,
+          serviceName: executionPolicy.monitor.serviceName ?? null,
+          timeoutAt: executionPolicy.monitor.timeoutAt ?? null,
+          maxAttempts: executionPolicy.monitor.maxAttempts ?? null,
+          recoveryPolicy: executionPolicy.monitor.recoveryPolicy ?? null,
+        },
+      });
+    }
 
     void queueIssueAssignmentWakeup({
       heartbeat,
@@ -2497,7 +2525,6 @@ export function issueRoutes(
           notes: nextMonitor.notes,
           scheduledBy: nextMonitor.scheduledBy,
           serviceName: nextMonitor.serviceName,
-          externalRef: nextMonitor.externalRef,
           timeoutAt: nextMonitor.timeoutAt,
           maxAttempts: nextMonitor.maxAttempts,
           recoveryPolicy: nextMonitor.recoveryPolicy,
