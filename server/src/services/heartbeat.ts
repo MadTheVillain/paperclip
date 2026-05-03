@@ -1833,6 +1833,7 @@ async function buildPaperclipWakePayload(input: {
         title: string;
         status: string;
         priority: string;
+        workMode: string;
       }
     | null;
 }) {
@@ -1850,6 +1851,7 @@ async function buildPaperclipWakePayload(input: {
             title: issues.title,
             status: issues.status,
             priority: issues.priority,
+            workMode: issues.workMode,
           })
           .from(issues)
           .where(and(eq(issues.id, issueId), eq(issues.companyId, input.companyId)))
@@ -1936,6 +1938,7 @@ async function buildPaperclipWakePayload(input: {
           title: issueSummary.title,
           status: issueSummary.status,
           priority: issueSummary.priority,
+          workMode: issueSummary.workMode,
         }
       : null,
     childIssueSummaries: Array.isArray(input.contextSnapshot.childIssueSummaries)
@@ -1955,6 +1958,8 @@ async function buildPaperclipWakePayload(input: {
           instruction: readNonEmptyString(input.contextSnapshot.livenessContinuationInstruction),
         }
       : null,
+    interactionKind: readNonEmptyString(input.contextSnapshot.interactionKind),
+    interactionStatus: readNonEmptyString(input.contextSnapshot.interactionStatus),
     checkedOutByHarness: input.contextSnapshot[PAPERCLIP_HARNESS_CHECKOUT_KEY] === true,
     dependencyBlockedInteraction: input.contextSnapshot.dependencyBlockedInteraction === true,
     treeHoldInteraction: input.contextSnapshot.treeHoldInteraction === true,
@@ -2016,11 +2021,16 @@ export function buildPaperclipTaskMarkdown(input: {
     id: string;
     identifier: string | null;
     title: string;
+    workMode?: string | null;
     description?: string | null;
   } | null;
   wakeComment?: {
     id: string;
     body: string;
+  } | null;
+  interaction?: {
+    kind?: string | null;
+    status?: string | null;
   } | null;
 }) {
   const quoteTaskScalar = (value: string) => JSON.stringify(value);
@@ -2034,6 +2044,8 @@ export function buildPaperclipTaskMarkdown(input: {
   };
   const issue = input.issue;
   const wakeComment = input.wakeComment ?? null;
+  const acceptedPlanContinuation =
+    input.interaction?.kind === "request_confirmation" && input.interaction.status === "accepted";
   if (!issue && !wakeComment) return null;
 
   const lines = [
@@ -2045,6 +2057,21 @@ export function buildPaperclipTaskMarkdown(input: {
       `- Issue: ${quoteTaskScalar(issue.identifier || issue.id)}`,
       `- Title: ${quoteTaskScalar(issue.title)}`,
     );
+    if (issue.workMode === "planning") {
+      let directive = "Make the plan only. Do not write code or perform implementation work.";
+      if (wakeComment) {
+        directive = "Update the plan only. Do not write code or perform implementation work.";
+      }
+      if (acceptedPlanContinuation) {
+        directive = "Create child issues from the approved plan only. Do not write code or perform implementation work on the planning issue.";
+      }
+      lines.push(
+        `- Work mode: ${quoteTaskScalar("planning")}`,
+        "",
+        "Planning mode directive:",
+        directive,
+      );
+    }
     const description = issue.description?.trim();
     if (description) {
       lines.push("", "Issue description:", fenceTaskText(description));
@@ -2328,6 +2355,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         title: issues.title,
         description: issues.description,
         status: issues.status,
+        workMode: issues.workMode,
         priority: issues.priority,
         projectId: issues.projectId,
         projectWorkspaceId: issues.projectWorkspaceId,
@@ -6564,6 +6592,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
           title: issueContext.title,
           status: issueContext.status,
           priority: issueContext.priority,
+          workMode: issueContext.workMode,
           description: issueContext.description,
           projectId: issueContext.projectId,
           projectWorkspaceId: issueContext.projectWorkspaceId,
@@ -6596,6 +6625,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
             title: issueRef.title,
             status: issueRef.status,
             priority: issueRef.priority,
+            workMode: issueRef.workMode,
           }
         : null,
     });
@@ -6610,10 +6640,15 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
             id: issueRef.id,
             identifier: issueRef.identifier,
             title: issueRef.title,
+            workMode: issueRef.workMode,
             description: issueRef.description,
           }
         : null,
       wakeComment: wakeCommentContext,
+      interaction: {
+        kind: readNonEmptyString(context.interactionKind),
+        status: readNonEmptyString(context.interactionStatus),
+      },
     });
     if (issueRef) {
       context.paperclipIssue = {
@@ -6621,6 +6656,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         identifier: issueRef.identifier,
         title: issueRef.title,
         description: issueRef.description,
+        workMode: issueRef.workMode,
       };
     } else {
       delete context.paperclipIssue;

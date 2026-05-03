@@ -1,8 +1,59 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildPaperclipTaskMarkdown,
   summarizeHeartbeatRunContextSnapshot,
   summarizeHeartbeatRunListResultJson,
 } from "../services/heartbeat.js";
+
+describe("buildPaperclipTaskMarkdown", () => {
+  it("adds planning directives for assignment and comment task context", () => {
+    const assignment = buildPaperclipTaskMarkdown({
+      issue: {
+        id: "issue-1",
+        identifier: "PAP-3404",
+        title: "Plan first",
+        workMode: "planning",
+        description: null,
+      },
+    });
+
+    expect(assignment).toContain("- Work mode: \"planning\"");
+    expect(assignment).toContain("Make the plan only. Do not write code or perform implementation work.");
+
+    const commentWake = buildPaperclipTaskMarkdown({
+      issue: {
+        id: "issue-1",
+        identifier: "PAP-3404",
+        title: "Plan first",
+        workMode: "planning",
+        description: null,
+      },
+      wakeComment: {
+        id: "comment-1",
+        body: "Please revise the plan.",
+      },
+    });
+
+    expect(commentWake).toContain("Update the plan only. Do not write code or perform implementation work.");
+
+    const acceptedConfirmation = buildPaperclipTaskMarkdown({
+      issue: {
+        id: "issue-1",
+        identifier: "PAP-3404",
+        title: "Plan first",
+        workMode: "planning",
+        description: null,
+      },
+      interaction: {
+        kind: "request_confirmation",
+        status: "accepted",
+      },
+    });
+
+    expect(acceptedConfirmation).toContain("Create child issues from the approved plan only");
+    expect(acceptedConfirmation).not.toContain("Make the plan only.");
+  });
+});
 
 describe("summarizeHeartbeatRunContextSnapshot", () => {
   it("keeps only the small retry/linking fields needed by the client", () => {
