@@ -346,6 +346,36 @@ describe("IssueChatThread", () => {
     });
   });
 
+  it("shows a planning notice in the composer area for planning mode issues", () => {
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <MemoryRouter>
+          <IssueChatThread
+            comments={[]}
+            linkedRuns={[]}
+            timelineEvents={[]}
+            liveRuns={[]}
+            issueWorkMode="planning"
+            onAdd={async () => {}}
+            enableLiveTranscriptPolling={false}
+          />
+        </MemoryRouter>,
+      );
+    });
+
+    const planningNotice = container.querySelector('[data-testid="issue-chat-thread-planning-notice"]');
+    expect(planningNotice).not.toBeNull();
+    expect(planningNotice?.textContent).toContain("Planning mode");
+    expect(planningNotice?.textContent).toContain("verification");
+    expect(planningNotice?.textContent).toContain("screenshots");
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
   it("virtualizes long merged threads so only a windowed slice mounts", () => {
     const root = createRoot(container);
     const totalMergedRows =

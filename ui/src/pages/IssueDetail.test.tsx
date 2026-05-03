@@ -192,6 +192,8 @@ vi.mock("../components/InlineEditor", () => ({
 
 vi.mock("../components/IssueChatThread", () => ({
   IssueChatThread: (props: {
+    onWorkModeChange?: (workMode: string) => void;
+    issueWorkMode?: string;
     onStopRun?: (runId: string) => Promise<void>;
     stopRunLabel?: string;
     stoppingRunLabel?: string;
@@ -1099,6 +1101,7 @@ describe("IssueDetail", () => {
     expect(mockIssueChatThreadRender.mock.calls.at(-1)?.[0]).toMatchObject({
       stopRunLabel: "Pause work",
       stoppingRunLabel: "Pausing...",
+      issueWorkMode: "standard",
     });
 
     const chatPauseButton = Array.from(container.querySelectorAll("button"))
@@ -1127,6 +1130,69 @@ describe("IssueDetail", () => {
     const pauseMenuButton = Array.from(container.querySelectorAll("button"))
       .find((button) => button.textContent?.trim() === "Pause work...");
     expect(pauseMenuButton).toBeTruthy();
+  });
+
+  it("passes planning work mode to the issue chat thread", async () => {
+    mockIssuesApi.get.mockResolvedValue(createIssue({ workMode: "planning" }));
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <IssueDetail />
+        </QueryClientProvider>,
+      );
+    });
+    await flushReact();
+
+    expect(mockIssueChatThreadRender.mock.calls.at(-1)?.[0]).toMatchObject({
+      issueWorkMode: "planning",
+    });
+    expect(container.textContent).toContain("Planning");
+  });
+
+  it("toggles issue work mode from issue detail and calls update", async () => {
+    const issue = createIssue();
+    mockIssuesApi.get.mockResolvedValue(issue);
+    mockIssuesApi.listAttachments.mockResolvedValue([
+      {
+        id: "attachment-1",
+        issueId: issue.id,
+        issueCommentId: null,
+        originalFilename: "planning-notes.txt",
+        contentPath: "/attachments/planning-notes.txt",
+        contentType: "text/plain",
+        byteSize: 4096,
+        uploadedByUserId: null,
+        uploadedAt: new Date("2026-04-21T00:02:00.000Z"),
+      },
+    ]);
+    localStorage.setItem("paperclip:issue-comment-draft:issue-1", "Draft follow-up message");
+    mockIssuesApi.update.mockResolvedValue(createIssue({ workMode: "planning" }));
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <IssueDetail />
+        </QueryClientProvider>,
+      );
+    });
+    await flushReact();
+    await flushReact();
+
+    const planningButton = container.querySelector('[data-issue-work-mode="planning"]') as HTMLButtonElement | null;
+    const standardButton = container.querySelector('[data-issue-work-mode="standard"]') as HTMLButtonElement | null;
+    expect(planningButton).not.toBeNull();
+    expect(standardButton).not.toBeNull();
+    expect(standardButton?.disabled).toBe(true);
+
+    await act(async () => {
+      planningButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flushReact();
+
+    expect(mockIssuesApi.update).toHaveBeenCalledWith(issue.id, { workMode: "planning" });
+    expect(localStorage.getItem("paperclip:issue-comment-draft:issue-1")).toBe("Draft follow-up message");
+    expect(container.textContent).toContain("planning-notes.txt");
+    localStorage.removeItem("paperclip:issue-comment-draft:issue-1");
   });
 
   it("renders Paused by board distinctly and defaults leaf resume to wake the assignee", async () => {

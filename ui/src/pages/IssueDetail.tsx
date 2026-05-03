@@ -145,6 +145,7 @@ import {
   type Issue,
   type IssueAttachment,
   type IssueComment,
+  type IssueWorkMode,
   type IssueThreadInteraction,
   type RequestConfirmationInteraction,
   type SuggestTasksInteraction,
@@ -186,6 +187,10 @@ const LEAF_WORK_CONTROL_MODE_HELP_TEXT: Partial<Record<IssueTreeControlMode, str
   pause: "Pause active execution on this issue until an explicit resume.",
   resume: "Release the active pause hold so this issue can continue.",
 };
+const ISSUE_WORK_MODE_OPTIONS: ReadonlyArray<{ value: IssueWorkMode; label: string }> = [
+  { value: "standard", label: "Standard" },
+  { value: "planning", label: "Planning" },
+];
 
 function issueTreeControlLabel(mode: IssueTreeControlMode, scope: "leaf" | "subtree") {
   return scope === "leaf"
@@ -581,6 +586,7 @@ type IssueDetailChatTabProps = {
   companyId: string;
   projectId: string | null;
   issueStatus: Issue["status"];
+  issueWorkMode: IssueWorkMode;
   executionRunId: string | null;
   blockedBy: Issue["blockedBy"];
   blockerAttention: Issue["blockerAttention"] | null;
@@ -592,6 +598,7 @@ type IssueDetailChatTabProps = {
   commentsLoadingOlder: boolean;
   onLoadOlderComments: () => void;
   onRefreshLatestComments: () => Promise<unknown> | void;
+  onWorkModeChange?: (workMode: IssueWorkMode) => void;
   composerRef: Ref<IssueChatComposerHandle>;
   feedbackVotes?: FeedbackVote[];
   feedbackDataSharingPreference: "allowed" | "not_allowed" | "prompt";
@@ -638,6 +645,7 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
   issueId,
   companyId,
   projectId,
+  issueWorkMode,
   issueStatus,
   executionRunId,
   blockedBy,
@@ -650,6 +658,7 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
   commentsLoadingOlder,
   onLoadOlderComments,
   onRefreshLatestComments,
+  onWorkModeChange,
   composerRef,
   feedbackVotes,
   feedbackDataSharingPreference,
@@ -815,9 +824,36 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
     () => extractIssueTimelineEvents(resolvedActivity),
     [resolvedActivity],
   );
+  const resolvedWorkMode: IssueWorkMode = issueWorkMode;
 
   return (
     <div className="space-y-3">
+      <div className="rounded-md border border-border bg-card/40 p-2">
+        <div className="inline-flex overflow-hidden rounded-md border border-border text-[11px]">
+          {ISSUE_WORK_MODE_OPTIONS.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              data-issue-work-mode={option.value}
+              aria-pressed={option.value === resolvedWorkMode}
+              disabled={option.value === resolvedWorkMode || !onWorkModeChange}
+              className={cn(
+                "px-2 py-1 transition-colors disabled:cursor-not-allowed disabled:opacity-60",
+                option.value === resolvedWorkMode
+                  ? "bg-accent text-accent-foreground"
+                  : "bg-background text-muted-foreground hover:bg-accent/50",
+              )}
+              onClick={() => {
+                if (option.value === resolvedWorkMode || !onWorkModeChange) return;
+                onWorkModeChange(option.value);
+              }}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
       {hasOlderComments ? (
         <div className="flex justify-center">
           <Button
@@ -878,6 +914,7 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
           onSubmitInteractionAnswers(interaction, answers)
         }
         onCancelInteraction={onCancelInteraction}
+        issueWorkMode={resolvedWorkMode}
         onCancelRun={runningIssueRun && onPauseWorkRun
           ? async () => {
               await onPauseWorkRun(runningIssueRun.id);
@@ -3190,6 +3227,15 @@ export function IssueDetail() {
             </span>
           ) : null}
 
+          {issue.workMode === "planning" ? (
+            <span
+              className="inline-flex items-center rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300 shrink-0"
+              title="This issue is in planning mode."
+            >
+              Planning
+            </span>
+          ) : null}
+
           {issue.projectId ? (
             <Link
               to={`/projects/${issue.projectId}`}
@@ -3706,6 +3752,7 @@ export function IssueDetail() {
               companyId={issue.companyId}
               projectId={issue.projectId ?? null}
               issueStatus={issue.status}
+              issueWorkMode={issue.workMode ?? "standard"}
               executionRunId={issue.executionRunId ?? null}
               blockedBy={issue.blockedBy ?? []}
               blockerAttention={issue.blockerAttention ?? null}
@@ -3741,6 +3788,11 @@ export function IssueDetail() {
               onPauseWorkRun={canManageTreeControl
                 ? (runId) => pauseIssueWorkRun.mutateAsync({ runId, scope: treeControlScope }).then(() => undefined)
                 : undefined}
+              onWorkModeChange={(nextMode) => {
+                const currentMode: IssueWorkMode = issue.workMode ?? "standard";
+                if (currentMode === nextMode) return;
+                updateIssue.mutate({ workMode: nextMode });
+              }}
               onCancelQueued={handleCancelQueuedComment}
               interruptingQueuedRunId={interruptQueuedComment.isPending ? interruptQueuedComment.variables ?? null : null}
               pausingWorkRunId={pauseIssueWorkRun.isPending ? pauseIssueWorkRun.variables?.runId ?? null : null}

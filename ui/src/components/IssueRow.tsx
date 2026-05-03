@@ -83,6 +83,14 @@ export function IssueRow({
       {checklistStepNumber}.
     </span>
   ) : null;
+  const planningModeIndicator = issue.workMode === "planning" ? (
+    <span
+      className="inline-flex items-center rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300"
+      title="This issue is in planning mode."
+    >
+      Planning
+    </span>
+  ) : null;
 
   return (
     <Link
@@ -104,6 +112,7 @@ export function IssueRow({
       <span className="flex shrink-0 items-center gap-1 pt-px sm:hidden">
         {mobileLeading ?? <StatusIcon status={issue.status} blockerAttention={issue.blockerAttention} className={selectedStatusClass} />}
         {productivityReviewIndicator}
+        {planningModeIndicator}
       </span>
       <span className="flex min-w-0 flex-1 flex-col gap-1 sm:contents">
         <span className={cn("line-clamp-2 text-sm sm:order-2 sm:min-w-0 sm:flex-1 sm:truncate sm:line-clamp-none", titleClassName)}>
@@ -123,6 +132,7 @@ export function IssueRow({
               <span className="hidden shrink-0 items-center gap-1 sm:inline-flex">
                 <StatusIcon status={issue.status} blockerAttention={issue.blockerAttention} className={selectedStatusClass} />
                 {productivityReviewIndicator}
+                {planningModeIndicator}
               </span>
               {checklistStep}
               <span className="shrink-0 font-mono text-xs text-muted-foreground">

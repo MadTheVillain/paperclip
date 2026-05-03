@@ -1,5 +1,6 @@
 import { memo, useState, useEffect, useRef, useCallback, useMemo, type ChangeEvent, type DragEvent, type RefObject } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import type { IssueWorkMode } from "@paperclipai/shared";
 import { pickTextColorForSolidBg } from "@/lib/color-contrast";
 import { useDialog } from "../context/DialogContext";
 import { useCompany } from "../context/CompanyContext";
@@ -86,6 +87,7 @@ interface IssueDraft {
   executionWorkspaceMode?: string;
   selectedExecutionWorkspaceId?: string;
   useIsolatedExecutionWorkspace?: boolean;
+  workMode?: IssueWorkMode;
 }
 
 type StagedIssueFile = {
@@ -129,6 +131,15 @@ const ISSUE_THINKING_EFFORT_OPTIONS = {
     { value: "max", label: "Max" },
   ],
 } as const;
+
+function isIssueWorkMode(value: unknown): value is IssueWorkMode {
+  return value === "standard" || value === "planning";
+}
+
+const ISSUE_WORK_MODE_OPTIONS = [
+  { value: "standard", label: "Standard" },
+  { value: "planning", label: "Planning" },
+] as const;
 
 function loadDraft(): IssueDraft | null {
   try {
@@ -400,6 +411,7 @@ export function NewIssueDialog() {
   const [assigneeChrome, setAssigneeChrome] = useState(false);
   const [executionWorkspaceMode, setExecutionWorkspaceMode] = useState<string>("shared_workspace");
   const [selectedExecutionWorkspaceId, setSelectedExecutionWorkspaceId] = useState("");
+  const [workMode, setWorkMode] = useState<IssueWorkMode>("standard");
   const [expanded, setExpanded] = useState(false);
   const [dialogCompanyId, setDialogCompanyId] = useState<string | null>(null);
   const [stagedFiles, setStagedFiles] = useState<StagedIssueFile[]>([]);
@@ -626,6 +638,7 @@ export function NewIssueDialog() {
       assigneeChrome,
       executionWorkspaceMode,
       selectedExecutionWorkspaceId,
+      workMode,
     });
   }, [
     newIssueOpen,
@@ -642,6 +655,7 @@ export function NewIssueDialog() {
     assigneeChrome,
     executionWorkspaceMode,
     selectedExecutionWorkspaceId,
+    workMode,
   ]);
 
   const handleTitleChange = useCallback((nextTitle: string) => {
@@ -678,6 +692,7 @@ export function NewIssueDialog() {
     assigneeChrome,
     executionWorkspaceMode,
     selectedExecutionWorkspaceId,
+    workMode,
     newIssueOpen,
     queueDraftSave,
   ]);
@@ -696,6 +711,7 @@ export function NewIssueDialog() {
 
     const draft = loadDraft();
     if (newIssueDefaults.parentId) {
+      const nextWorkMode = isIssueWorkMode(newIssueDefaults.workMode) ? newIssueDefaults.workMode : "standard";
       const defaultProjectId = newIssueDefaults.projectId ?? "";
       const defaultProject = orderedProjects.find((project) => project.id === defaultProjectId);
       const hasExplicitProjectWorkspaceId = newIssueDefaults.projectWorkspaceId !== undefined;
@@ -713,11 +729,13 @@ export function NewIssueDialog() {
       setAssigneeThinkingEffort("");
       setAssigneeChrome(false);
       setExecutionWorkspaceMode(defaultExecutionWorkspaceMode);
+      setWorkMode(nextWorkMode);
       setSelectedExecutionWorkspaceId(newIssueDefaults.executionWorkspaceId ?? "");
       executionWorkspaceDefaultProjectId.current = hasExplicitProjectWorkspaceId || defaultProject
         ? defaultProjectId || null
         : null;
     } else if (newIssueDefaults.title) {
+      const nextWorkMode = isIssueWorkMode(newIssueDefaults.workMode) ? newIssueDefaults.workMode : "standard";
       setIssueText(newIssueDefaults.title, newIssueDefaults.description ?? "");
       setStatus(newIssueDefaults.status ?? "todo");
       setPriority(newIssueDefaults.priority ?? "");
@@ -735,11 +753,13 @@ export function NewIssueDialog() {
       setAssigneeThinkingEffort("");
       setAssigneeChrome(false);
       setExecutionWorkspaceMode(defaultExecutionWorkspaceModeForIssueDefaults(newIssueDefaults, defaultProject));
+      setWorkMode(nextWorkMode);
       setSelectedExecutionWorkspaceId(newIssueDefaults.executionWorkspaceId ?? "");
       executionWorkspaceDefaultProjectId.current = hasExplicitProjectWorkspaceId || newIssueDefaults.executionWorkspaceId || defaultProject
         ? defaultProjectId || null
         : null;
     } else if (draft && draft.title.trim()) {
+      const nextWorkMode = isIssueWorkMode(draft.workMode) ? draft.workMode : "standard";
       const restoredProjectId = newIssueDefaults.projectId ?? draft.projectId;
       const restoredProject = orderedProjects.find((project) => project.id === restoredProjectId);
       const hasExplicitProjectWorkspaceId = newIssueDefaults.projectWorkspaceId !== undefined;
@@ -775,6 +795,7 @@ export function NewIssueDialog() {
               ?? (draft.useIsolatedExecutionWorkspace ? "isolated_workspace" : defaultExecutionWorkspaceModeForProject(restoredProject))
             ),
       );
+      setWorkMode(nextWorkMode);
       setSelectedExecutionWorkspaceId(
         hasExplicitExecutionWorkspaceId
           ? (newIssueDefaults.executionWorkspaceId ?? "")
@@ -784,6 +805,7 @@ export function NewIssueDialog() {
         ? restoredProjectId || null
         : null;
     } else {
+      setWorkMode("standard");
       const defaultProjectId = newIssueDefaults.projectId ?? "";
       const defaultProject = orderedProjects.find((project) => project.id === defaultProjectId);
       const hasExplicitProjectWorkspaceId = newIssueDefaults.projectWorkspaceId !== undefined;
@@ -863,6 +885,7 @@ export function NewIssueDialog() {
     setAssigneeChrome(false);
     setExecutionWorkspaceMode("shared_workspace");
     setSelectedExecutionWorkspaceId("");
+    setWorkMode("standard");
     setExpanded(false);
     setDialogCompanyId(null);
     setStagedFiles([]);
@@ -889,6 +912,7 @@ export function NewIssueDialog() {
     setAssigneeChrome(false);
     setExecutionWorkspaceMode("shared_workspace");
     setSelectedExecutionWorkspaceId("");
+    setWorkMode("standard");
   }
 
   function discardDraft() {
@@ -939,6 +963,7 @@ export function NewIssueDialog() {
       description: currentDescription || undefined,
       status,
       priority: priority || "medium",
+      workMode,
       ...(selectedAssigneeAgentId ? { assigneeAgentId: selectedAssigneeAgentId } : {}),
       ...(selectedAssigneeUserId ? { assigneeUserId: selectedAssigneeUserId } : {}),
       ...(newIssueDefaults.parentId ? { parentId: newIssueDefaults.parentId } : {}),
@@ -1867,6 +1892,25 @@ export function NewIssueDialog() {
             <Paperclip className="h-3 w-3" />
             Upload
           </button>
+
+          <div className="inline-flex overflow-hidden rounded-md border border-border text-xs">
+            {ISSUE_WORK_MODE_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                data-issue-work-mode={option.value}
+                className={cn(
+                  "px-2 py-1 text-[11px] transition-colors",
+                  option.value === workMode
+                    ? "bg-accent text-accent-foreground"
+                    : "bg-background text-muted-foreground hover:bg-accent/50",
+                )}
+                onClick={() => setWorkMode(option.value)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
 
           {/* More (dates) */}
           <Popover open={moreOpen} onOpenChange={setMoreOpen}>

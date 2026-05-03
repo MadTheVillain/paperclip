@@ -227,6 +227,22 @@ describe("IssueRow", () => {
     });
   });
 
+  it("renders planning mode marker for planning work mode issues", () => {
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(<IssueRow issue={createIssue({ workMode: "planning" })} />);
+    });
+
+    const link = container.querySelector("[data-inbox-issue-link]") as HTMLAnchorElement | null;
+    expect(link).not.toBeNull();
+    expect(link?.textContent).toContain("Planning");
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
   it("renders without error when titleSuffix is omitted", () => {
     const root = createRoot(container);
 

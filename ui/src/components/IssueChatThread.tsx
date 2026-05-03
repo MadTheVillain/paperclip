@@ -37,6 +37,7 @@ import type {
   IssueBlockerAttention,
   IssueRelationIssueSummary,
   SuccessfulRunHandoffState,
+  IssueWorkMode,
 } from "@paperclipai/shared";
 import type { ActiveRunForIssue, LiveRunForIssue } from "../api/heartbeats";
 import { useLiveRunTranscripts } from "./transcript/useLiveRunTranscripts";
@@ -263,6 +264,9 @@ interface IssueChatComposerProps {
   issueStatus?: string;
 }
 
+const ISSUE_WORK_MODE_COMPOSER_HINT =
+  "This issue is in planning mode. Replies should focus on planning before execution, then share verification notes and screenshots as evidence before moving to execution.";
+
 interface IssueChatThreadProps {
   comments: IssueChatComment[];
   interactions?: IssueThreadInteraction[];
@@ -333,6 +337,7 @@ interface IssueChatThreadProps {
     interaction: AskUserQuestionsInteraction,
   ) => Promise<void> | void;
   composerRef?: Ref<IssueChatComposerHandle>;
+  issueWorkMode?: IssueWorkMode;
   /**
    * Hook for the parent to refetch comments when the user explicitly asks
    * to jump to the latest comment. Used to make sure the absolute newest
@@ -3300,6 +3305,7 @@ export function IssueChatThread({
   onSubmitInteractionAnswers,
   onCancelInteraction,
   composerRef,
+  issueWorkMode,
   onRefreshLatestComments,
 }: IssueChatThreadProps) {
   const location = useLocation();
@@ -3873,10 +3879,19 @@ export function IssueChatThread({
                     stoppingRunId={stoppingRunId}
                     interruptingQueuedRunId={interruptingQueuedRunId}
                   />
-                ))
-              )}
+              ))
+            )}
               {showComposer ? (
                 <div data-testid="issue-chat-thread-notices" className="space-y-2">
+                  {issueWorkMode === "planning" ? (
+                    <div
+                      data-testid="issue-chat-thread-planning-notice"
+                      className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-xs text-amber-700 dark:text-amber-300"
+                    >
+                      <p className="font-medium">Planning mode</p>
+                      <p>{ISSUE_WORK_MODE_COMPOSER_HINT}</p>
+                    </div>
+                  ) : null}
                   <IssueBlockedNotice
                     issueStatus={issueStatus}
                     blockers={unresolvedBlockers}
