@@ -238,7 +238,11 @@ export function Search() {
     );
     if (!exact?.issue) return;
     lastIdentifierRedirectRef.current = upper;
-    navigate(exact.href.startsWith("/") ? exact.href : `/${exact.href}`, { replace: true });
+    // Strip the comment/document deep-link suffix so an exact identifier match
+    // lands on the issue root, not the top-scored snippet.
+    const baseHref = exact.href.split("#")[0] ?? exact.href;
+    const navigateHref = baseHref.startsWith("/") ? baseHref : `/${baseHref}`;
+    navigate(navigateHref, { replace: true });
   }, [data, navigate, trimmedQuery]);
 
   const handleClear = useCallback(() => {

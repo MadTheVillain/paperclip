@@ -16,6 +16,11 @@ import {
 
 const MIN_TOKEN_LENGTH = 2;
 const MIN_FUZZY_QUERY_LENGTH = 4;
+const MIN_FUZZY_TOKEN_LENGTH = 4;
+const FUZZY_DROP_ONE_MIN_LENGTH = 5;
+const FUZZY_WHOLE_QUERY_THRESHOLD = 0.30;
+const FUZZY_TOKEN_WORD_SIMILARITY_THRESHOLD = 0.50;
+const FUZZY_IDENTIFIER_WORD_SIMILARITY_THRESHOLD = 0.55;
 const SNIPPET_MAX_CHARS = 240;
 export const COMPANY_SEARCH_BRANCH_FETCH_LIMIT = COMPANY_SEARCH_MAX_LIMIT + 1;
 
@@ -61,6 +66,24 @@ function tokenizeQuery(normalizedQuery: string) {
     if (tokens.length >= COMPANY_SEARCH_MAX_TOKENS) break;
   }
   return tokens;
+}
+
+// Build fuzzy variants for each query token. Trigram similarity collapses on
+// transposition (e.g. "serach" → "search") because every adjacent swap breaks
+// multiple trigrams. Pre-computing drop-one-character variants (e.g. "serch")
+// lets pg_trgm's word_similarity recover those typos via a near-substring match.
+function fuzzyVariantsForTokens(tokens: string[]): string[] {
+  const variants = new Set<string>();
+  for (const token of tokens) {
+    if (token.length < MIN_FUZZY_TOKEN_LENGTH) continue;
+    variants.add(token);
+    if (token.length < FUZZY_DROP_ONE_MIN_LENGTH) continue;
+    for (let index = 0; index < token.length; index += 1) {
+      const variant = token.slice(0, index) + token.slice(index + 1);
+      if (variant.length >= MIN_FUZZY_TOKEN_LENGTH) variants.add(variant);
+    }
+  }
+  return [...variants];
 }
 
 function sqlTextArray(values: string[]) {
@@ -296,9 +319,12 @@ export function companySearchService(db: Db) {
       const prefix = routePrefix(company?.issuePrefix);
       const fetchLimit = companySearchBranchFetchLimit(limit);
       const tokenArray = sqlTextArray(tokens);
+      const fuzzyVariants = fuzzyVariantsForTokens(tokens);
+      const fuzzyVariantArray = sqlTextArray(fuzzyVariants);
       const containsPattern = `%${normalizedQuery}%`;
       const startsWithPattern = `${normalizedQuery}%`;
       const fuzzyEnabled = normalizedQuery.length >= MIN_FUZZY_QUERY_LENGTH;
+      const fuzzyTokensEnabled = fuzzyEnabled && fuzzyVariants.length > 0;
 
       const titlePhraseMatch = sql<boolean>`lower(${issues.title}) LIKE ${containsPattern}`;
       const titleStartsWith = sql<boolean>`lower(${issues.title}) LIKE ${startsWithPattern}`;
@@ -345,12 +371,30 @@ export function companySearchService(db: Db) {
             )
         )
       `;
-      const fuzzyMatch = fuzzyEnabled
+      const fuzzyTokenTitleMatch = fuzzyTokensEnabled
         ? sql<boolean>`
-          similarity(lower(${issues.title}), ${normalizedQuery}) >= 0.35
-          OR similarity(lower(coalesce(${issues.identifier}, '')), ${normalizedQuery}) >= 0.45
+          EXISTS (
+            SELECT 1
+            FROM unnest(${fuzzyVariantArray}) AS fuzzy_variant(value)
+            WHERE word_similarity(fuzzy_variant.value, lower(${issues.title})) >= ${FUZZY_TOKEN_WORD_SIMILARITY_THRESHOLD}
+          )
         `
         : positiveSql();
+      const fuzzyTokenIdentifierMatch = fuzzyTokensEnabled
+        ? sql<boolean>`
+          EXISTS (
+            SELECT 1
+            FROM unnest(${fuzzyVariantArray}) AS fuzzy_variant(value)
+            WHERE word_similarity(fuzzy_variant.value, lower(coalesce(${issues.identifier}, ''))) >= ${FUZZY_IDENTIFIER_WORD_SIMILARITY_THRESHOLD}
+          )
+        `
+        : positiveSql();
+      const fuzzyWholeQueryMatch = fuzzyEnabled
+        ? sql<boolean>`
+          word_similarity(${normalizedQuery}, lower(${issues.title})) >= ${FUZZY_WHOLE_QUERY_THRESHOLD}
+        `
+        : positiveSql();
+      const fuzzyMatch = sql<boolean>`(${fuzzyTokenTitleMatch} OR ${fuzzyTokenIdentifierMatch} OR ${fuzzyWholeQueryMatch})`;
       const tokenCoverage = sql<number>`
         (
           SELECT count(*)::int
@@ -403,8 +447,8 @@ export function companySearchService(db: Db) {
       `;
       const matchedFields = sql<string[]>`
         array_remove(ARRAY[
-          CASE WHEN ${identifierPhraseMatch} OR ${identifierTokenMatch} OR (${fuzzyEnabled} AND similarity(lower(coalesce(${issues.identifier}, '')), ${normalizedQuery}) >= 0.45) THEN 'identifier' END,
-          CASE WHEN ${titlePhraseMatch} OR ${titleTokenMatch} OR (${fuzzyEnabled} AND similarity(lower(${issues.title}), ${normalizedQuery}) >= 0.35) THEN 'title' END,
+          CASE WHEN ${identifierPhraseMatch} OR ${identifierTokenMatch} OR ${fuzzyTokenIdentifierMatch} THEN 'identifier' END,
+          CASE WHEN ${titlePhraseMatch} OR ${titleTokenMatch} OR ${fuzzyTokenTitleMatch} OR ${fuzzyWholeQueryMatch} THEN 'title' END,
           CASE WHEN ${descriptionPhraseMatch} OR ${descriptionTokenMatch} THEN 'description' END,
           CASE WHEN ${commentMatch} THEN 'comment' END,
           CASE WHEN ${documentMatch} THEN 'document' END

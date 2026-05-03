@@ -277,6 +277,60 @@ describe("Search page", () => {
     });
   });
 
+  it("auto-redirects an exact identifier match to the issue root, dropping any deep-link suffix", async () => {
+    searchApiMock.search.mockResolvedValueOnce({
+      query: "PAP-3366",
+      normalizedQuery: "pap-3366",
+      scope: "all",
+      limit: 20,
+      offset: 0,
+      countsByType: { issue: 1, agent: 0, project: 0 },
+      hasMore: false,
+      results: [
+        {
+          id: "issue-3366",
+          type: "issue",
+          score: 1300,
+          title: "PAP-3366 Continuation summary",
+          href: "/PAP/issues/PAP-3366#document-continuation-summary",
+          matchedFields: ["identifier", "document"],
+          sourceLabel: "Document",
+          snippet: "Continuation summary excerpt",
+          snippets: [
+            {
+              field: "document",
+              label: "Continuation summary",
+              text: "Continuation summary excerpt",
+              highlights: [],
+            },
+          ],
+          issue: {
+            id: "issue-3366",
+            identifier: "PAP-3366",
+            title: "Continuation summary",
+            status: "in_progress",
+            priority: "medium",
+            assigneeAgentId: null,
+            assigneeUserId: null,
+            projectId: null,
+            updatedAt: new Date().toISOString(),
+          },
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+    });
+
+    const { root } = renderSearch("/search?q=PAP-3366", container);
+
+    await waitForAssertion(() => {
+      expect(navigateMock).toHaveBeenCalledWith("/PAP/issues/PAP-3366", { replace: true });
+    });
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
   it("renders the no-results state with a Search-all action when scope is non-default", async () => {
     searchApiMock.search.mockResolvedValueOnce({
       query: "ghost",

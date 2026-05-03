@@ -210,4 +210,33 @@ describeEmbeddedPostgres("companySearchService", () => {
     expect(result.results[0]?.id).toBe(issueId);
     expect(result.results[0]?.matchedFields).toContain("title");
   });
+
+  it("matches transposition typos against multi-word titles", async () => {
+    const companyId = await createCompany();
+    const searchIssueId = await createIssue(companyId, {
+      identifier: "TST-10",
+      title: "Improve search performance",
+    });
+    const mobileIssueId = await createIssue(companyId, {
+      identifier: "TST-11",
+      title: "Polish mobile navigation",
+    });
+    const otherIssueId = await createIssue(companyId, {
+      identifier: "TST-12",
+      title: "Refactor billing reports",
+    });
+
+    const transpositionCases: Array<{ query: string; expectedId: string; rejected: string }> = [
+      { query: "serach", expectedId: searchIssueId, rejected: otherIssueId },
+      { query: "mibile", expectedId: mobileIssueId, rejected: otherIssueId },
+      { query: "mobail", expectedId: mobileIssueId, rejected: otherIssueId },
+    ];
+
+    for (const { query, expectedId, rejected } of transpositionCases) {
+      const result = await svc.search(companyId, companySearchQuerySchema.parse({ q: query }));
+      const ids = result.results.map((row) => row.id);
+      expect(ids, `query=${query}`).toContain(expectedId);
+      expect(ids, `query=${query} should not match unrelated issue`).not.toContain(rejected);
+    }
+  });
 });
