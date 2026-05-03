@@ -1782,6 +1782,7 @@ function enrichWakeContextSnapshot(input: {
     contextSnapshot.wakeTriggerDetail = triggerDetail;
   }
   normalizeModelProfileWakeContext({ contextSnapshot, payload });
+  normalizeInteractionContinuationWakeContext(contextSnapshot, payload);
 
   return {
     contextSnapshot,
@@ -1790,6 +1791,35 @@ function enrichWakeContextSnapshot(input: {
     taskKey,
     wakeCommentId,
   };
+}
+
+const INTERACTION_CONTINUATION_CONTEXT_KEYS = [
+  "interactionId",
+  "interactionKind",
+  "interactionStatus",
+  "continuationPolicy",
+] as const;
+
+function isInteractionResolutionWakePayload(payload: Record<string, unknown> | null | undefined) {
+  return readNonEmptyString(payload?.mutation) === "interaction";
+}
+
+function clearInteractionContinuationWakeContext(contextSnapshot: Record<string, unknown>) {
+  for (const key of INTERACTION_CONTINUATION_CONTEXT_KEYS) {
+    delete contextSnapshot[key];
+  }
+}
+
+function hasInteractionContinuationWakeContext(contextSnapshot: Record<string, unknown>) {
+  return INTERACTION_CONTINUATION_CONTEXT_KEYS.some((key) => readNonEmptyString(contextSnapshot[key]));
+}
+
+function normalizeInteractionContinuationWakeContext(
+  contextSnapshot: Record<string, unknown>,
+  payload: Record<string, unknown> | null | undefined,
+) {
+  if (isInteractionResolutionWakePayload(payload)) return;
+  clearInteractionContinuationWakeContext(contextSnapshot);
 }
 
 export function mergeCoalescedContextSnapshot(
@@ -1810,6 +1840,9 @@ export function mergeCoalescedContextSnapshot(
     // The merged context should carry canonical comment ids; the next wake will
     // regenerate any structured payload from those ids.
     delete merged[PAPERCLIP_WAKE_PAYLOAD_KEY];
+  }
+  if (!hasInteractionContinuationWakeContext(incoming)) {
+    clearInteractionContinuationWakeContext(merged);
   }
   return merged;
 }
@@ -2045,7 +2078,9 @@ export function buildPaperclipTaskMarkdown(input: {
   const issue = input.issue;
   const wakeComment = input.wakeComment ?? null;
   const acceptedPlanContinuation =
-    input.interaction?.kind === "request_confirmation" && input.interaction.status === "accepted";
+    !wakeComment &&
+    input.interaction?.kind === "request_confirmation" &&
+    input.interaction.status === "accepted";
   if (!issue && !wakeComment) return null;
 
   const lines = [
@@ -8800,7 +8835,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     if (coalescedTargetRun) {
       const mergedContextSnapshot = mergeCoalescedContextSnapshot(
         coalescedTargetRun.contextSnapshot,
-        contextSnapshot,
+        enrichedContextSnapshot,
       );
       const mergedRun = await db
         .update(heartbeatRuns)

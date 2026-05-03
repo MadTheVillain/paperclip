@@ -492,6 +492,30 @@ describe("renderPaperclipWakePrompt", () => {
     expect(commentPrompt).toContain("Update the plan only. Do not write code or perform implementation work.");
   });
 
+  it("does not render stale accepted-plan continuation guidance for later planning comment wakes", () => {
+    const prompt = renderPaperclipWakePrompt({
+      reason: "issue_commented",
+      issue: {
+        id: "issue-1",
+        identifier: "PAP-3404",
+        title: "Plan first",
+        status: "in_progress",
+        workMode: "planning",
+      },
+      interactionKind: "request_confirmation",
+      interactionStatus: "accepted",
+      commentIds: ["comment-1"],
+      latestCommentId: "comment-1",
+      commentWindow: { requestedCount: 1, includedCount: 1, missingCount: 0 },
+      comments: [{ id: "comment-1", body: "Revise the plan" }],
+      fallbackFetchNeeded: false,
+    });
+
+    expect(prompt).toContain("Update the plan only. Do not write code or perform implementation work.");
+    expect(prompt).not.toContain("accepted-plan continuation");
+    expect(prompt).not.toContain("Create child issues from the approved plan only");
+  });
+
   it("renders accepted-plan continuation guidance for planning issues", () => {
     const prompt = renderPaperclipWakePrompt({
       reason: "issue_commented",

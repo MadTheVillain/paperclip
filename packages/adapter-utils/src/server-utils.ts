@@ -669,6 +669,7 @@ export function renderPaperclipWakePrompt(
   if (normalized.issue?.workMode === "planning") {
     const hasComments = normalized.comments.length > 0 || normalized.commentIds.length > 0;
     const acceptedPlanContinuation =
+      !hasComments &&
       normalized.interactionKind === "request_confirmation" && normalized.interactionStatus === "accepted";
     let directive = "Make the plan only. Do not write code or perform implementation work.";
     if (hasComments) {
