@@ -1189,7 +1189,7 @@ describe("IssueDetail", () => {
     });
     await flushReact();
 
-    expect(mockIssuesApi.update).toHaveBeenCalledWith(issue.id, { workMode: "planning" });
+    expect(mockIssuesApi.update).toHaveBeenCalledWith(issue.identifier, { workMode: "planning" });
     expect(localStorage.getItem("paperclip:issue-comment-draft:issue-1")).toBe("Draft follow-up message");
     expect(container.textContent).toContain("planning-notes.txt");
     localStorage.removeItem("paperclip:issue-comment-draft:issue-1");

@@ -3883,15 +3883,6 @@ export function IssueChatThread({
             )}
               {showComposer ? (
                 <div data-testid="issue-chat-thread-notices" className="space-y-2">
-                  {issueWorkMode === "planning" ? (
-                    <div
-                      data-testid="issue-chat-thread-planning-notice"
-                      className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-xs text-amber-700 dark:text-amber-300"
-                    >
-                      <p className="font-medium">Planning mode</p>
-                      <p>{ISSUE_WORK_MODE_COMPOSER_HINT}</p>
-                    </div>
-                  ) : null}
                   <IssueBlockedNotice
                     issueStatus={issueStatus}
                     blockers={unresolvedBlockers}
@@ -3924,6 +3915,15 @@ export function IssueChatThread({
             data-testid="issue-chat-composer-dock"
             className="sticky bottom-[calc(env(safe-area-inset-bottom)+20px)] z-20 space-y-2 bg-gradient-to-t from-background via-background/95 to-background/0 pt-6"
           >
+            {issueWorkMode === "planning" ? (
+              <div
+                data-testid="issue-chat-thread-planning-notice"
+                className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-xs text-amber-700 dark:text-amber-300"
+              >
+                <p className="font-medium">Planning mode</p>
+                <p>{ISSUE_WORK_MODE_COMPOSER_HINT}</p>
+              </div>
+            ) : null}
             <IssueChatComposer
               ref={composerRef}
               onImageUpload={imageUploadHandler}
