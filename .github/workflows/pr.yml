@@ -155,7 +155,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Release canary dry run
+      # `release.sh` always executes its Step 2/7 workspace build, even when
+      # `--skip-verify` bypasses the initial verification gate.
+      - name: Release canary dry run via release.sh internal build
         run: |
           git checkout -B master HEAD
           git checkout -- pnpm-lock.yaml

@@ -49,8 +49,7 @@ function listWorkspacePackages() {
 
 function buildSkipsTypeScript(pkg) {
   const buildScript = pkg.scripts?.build;
-  const typecheckScript = pkg.scripts?.typecheck;
-  if (typeof buildScript !== "string" || typeof typecheckScript !== "string") {
+  if (typeof buildScript !== "string") {
     return false;
   }
 
@@ -58,7 +57,7 @@ function buildSkipsTypeScript(pkg) {
 }
 
 const workspacePackages = listWorkspacePackages();
-const buildGapPackages = workspacePackages
+const buildGapCandidates = workspacePackages
   .filter((workspacePkg) => workspacePkg.path !== repoRoot)
   .map((workspacePkg) => ({
     name: workspacePkg.name,
@@ -66,6 +65,17 @@ const buildGapPackages = workspacePackages
     pkg: readJson(path.join(workspacePkg.path, "package.json")),
   }))
   .filter(({ pkg }) => buildSkipsTypeScript(pkg));
+const packagesMissingTypecheck = buildGapCandidates.filter(
+  ({ pkg }) => typeof pkg.scripts?.typecheck !== "string",
+);
+for (const workspacePkg of packagesMissingTypecheck) {
+  console.warn(
+    `[typecheck:build-gaps] warning: ${workspacePkg.name} has a build script without tsc but no explicit typecheck script.`,
+  );
+}
+const buildGapPackages = buildGapCandidates.filter(
+  ({ pkg }) => typeof pkg.scripts?.typecheck === "string",
+);
 
 console.log(
   `[typecheck:build-gaps] typechecking ${buildGapPackages.length} workspace(s): ${buildGapPackages.map(({ name }) => name).join(", ") || "(none)"}`,
