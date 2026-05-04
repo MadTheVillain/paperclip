@@ -1294,7 +1294,7 @@ Route sidebar state stays attached to the selected wiki page.
       identifier: "PAP-4002",
       title: "Sensitive source issue",
       projectId: "77777777-7777-4777-8777-777777777777",
-      description: "Keep the project page current without copying credential material into the wiki.",
+      description: "Keep the project page current without copying OPENAI_API_KEY=sk-supersecretissuevalue1234567890 into the wiki.",
       updatedAt: new Date("2026-05-04T10:00:00Z"),
     });
     harness.seed({
@@ -1335,11 +1335,14 @@ Route sidebar state stays attached to the selected wiki page.
     expect(run.bundle.markdown).toContain("Suppressed by LLM Wiki distillation security policy");
     expect(run.bundle.markdown).not.toContain("ghp_supersecretcommenttoken1234567890");
     expect(run.bundle.markdown).not.toContain("sk-supersecretdocumentvalue1234567890");
+    expect(run.bundle.markdown).not.toContain("sk-supersecretissuevalue1234567890");
     expect(run.bundle.warnings).toEqual(expect.arrayContaining([
+      expect.stringContaining("Suppressed issue content"),
       expect.stringContaining("Suppressed comment content"),
       expect.stringContaining("Suppressed document content"),
     ]));
     expect(run.bundle.sourceRefs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "issue", redactionStatus: "suppressed_sensitive_content" }),
       expect.objectContaining({ kind: "comment", redactionStatus: "suppressed_sensitive_content" }),
       expect.objectContaining({ kind: "document", redactionStatus: "suppressed_sensitive_content" }),
     ]));
@@ -1351,6 +1354,7 @@ Route sidebar state stays attached to the selected wiki page.
     expect(storedMarkdown).toContain("Suppressed by LLM Wiki distillation security policy");
     expect(storedMarkdown).not.toContain("ghp_supersecretcommenttoken1234567890");
     expect(storedMarkdown).not.toContain("sk-supersecretdocumentvalue1234567890");
+    expect(storedMarkdown).not.toContain("sk-supersecretissuevalue1234567890");
   });
 
   it("creates source snapshots and only advances cursors after successful distillation outcomes", async () => {

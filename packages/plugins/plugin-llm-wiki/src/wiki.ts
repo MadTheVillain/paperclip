@@ -398,7 +398,7 @@ function redactDistillationSensitiveText(input: string): string {
 
 function protectDistillationSourceBody(input: {
   issue: Issue;
-  sourceKind: "comment" | "document";
+  sourceKind: "issue" | "comment" | "document";
   sourceId: string;
   body: string;
 }): DistillationSourceProtectionResult {
@@ -1465,6 +1465,13 @@ export async function assemblePaperclipSourceBundle(ctx: PluginContext, input: P
   const remaining = { value: maxCharacters - lines.join("\n").length };
 
   for (const issue of issues) {
+    const protectedIssue = protectDistillationSourceBody({
+      issue,
+      sourceKind: "issue",
+      sourceId: issue.id,
+      body: issue.description?.trim() ? issue.description.trim() : "_No issue description._",
+    });
+    if (protectedIssue.warning) warnings.push(protectedIssue.warning);
     const issueBody = [
       `- Issue ID: ${issue.id}`,
       issue.identifier ? `- Identifier: ${issue.identifier}` : null,
@@ -1474,7 +1481,7 @@ export async function assemblePaperclipSourceBundle(ctx: PluginContext, input: P
       issue.projectId ? `- Project ID: ${issue.projectId}` : null,
       `- Updated at: ${isoString(issue.updatedAt) ?? "unknown"}`,
       "",
-      issue.description?.trim() ? issue.description.trim() : "_No issue description._",
+      protectedIssue.body,
     ].filter((line): line is string => line !== null).join("\n");
     appendBoundedSection({
       lines,
@@ -1488,6 +1495,7 @@ export async function assemblePaperclipSourceBundle(ctx: PluginContext, input: P
         projectId: issue.projectId ?? null,
         title: issue.title,
         updatedAt: isoString(issue.updatedAt) ?? undefined,
+        ...protectedIssue.refPatch,
       },
       remaining,
       perSourceLimit,

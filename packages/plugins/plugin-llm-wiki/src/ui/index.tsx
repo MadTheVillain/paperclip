@@ -76,6 +76,7 @@ const DEFAULT_ROUTE_SIDEBAR_EXPANDED_PATHS = [
   "wiki",
   "wiki/sources",
   "wiki/projects",
+  "wiki/areas",
   "wiki/entities",
   "wiki/concepts",
   "wiki/synthesis",
