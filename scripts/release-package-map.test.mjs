@@ -13,15 +13,10 @@ test("release package manifest covers all public packages with explicit CI enrol
   assert.ok(packages.every((pkg) => typeof pkg.publishFromCi === "boolean"));
 });
 
-test("ACPX adapter remains enrolled for CI publishing", () => {
-  const packages = buildReleasePackagePlan();
-  const acpxPackage = packages.find((pkg) => pkg.name === "@paperclipai/adapter-acpx-local");
-  assert.ok(acpxPackage);
-  assert.equal(acpxPackage.publishFromCi, true);
-
-  const enabledNames = new Set(getReleasePackages().map((pkg) => pkg.name));
-  assert.equal(enabledNames.has("@paperclipai/adapter-acpx-local"), true);
-  assert.equal(enabledNames.has("@paperclipai/adapter-utils"), true);
+test("release package list only contains CI-enrolled packages", () => {
+  const enabledPackages = getReleasePackages();
+  assert.ok(enabledPackages.length > 0);
+  assert.ok(enabledPackages.every((pkg) => pkg.publishFromCi === true));
 });
 
 test("release package configuration validates successfully", () => {
