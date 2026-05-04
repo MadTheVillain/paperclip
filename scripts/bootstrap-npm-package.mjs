@@ -92,6 +92,32 @@ function runChecked(command, args, options = {}) {
   }
 }
 
+function ensureNpmAuth() {
+  const result = runCommand("npm", ["whoami"]);
+  const stdout = result.stdout ?? "";
+  const stderr = result.stderr ?? "";
+
+  if (stdout) process.stdout.write(stdout);
+  if (stderr) process.stderr.write(stderr);
+
+  if (result.status === 0) {
+    return;
+  }
+
+  const output = `${stdout}\n${stderr}`.trim();
+  if (/\bE401\b|401 Unauthorized/i.test(output)) {
+    throw new Error(
+      [
+        "npm auth check failed.",
+        "Run `npm login` or `npm adduser` on this maintainer machine with an npm account that can publish to the @paperclipai scope, then rerun with --publish.",
+        "Do not use this auth flow in CI; it is only for the one-time human bootstrap publish.",
+      ].join(" "),
+    );
+  }
+
+  throw new Error("npm whoami failed");
+}
+
 function inspectNpmPackage(packageName) {
   const result = runCommand("npm", ["view", packageName, "version", "--json"]);
 
@@ -168,7 +194,7 @@ function main(argv) {
 
   if (publish) {
     process.stdout.write("Checking npm auth with npm whoami...\n");
-    runChecked("npm", ["whoami"]);
+    ensureNpmAuth();
   }
 
   if (!skipBuild && typeof pkg.pkg?.scripts?.build === "string") {
@@ -208,6 +234,7 @@ if (isDirectRun) {
 }
 
 export {
+  ensureNpmAuth,
   inspectNpmPackage,
   parseArgs,
   resolveTargetPackage,

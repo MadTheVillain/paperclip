@@ -212,6 +212,10 @@ The helper script:
 - runs `npm pack --dry-run` in the package directory
 - only runs the real `npm publish --access public` when `--publish` is provided
 
+For the real `--publish` step, the maintainer machine must already be authenticated to npm.
+If `npm whoami` returns `401`, run `npm login` or `npm adduser` locally as an npm org member first, then rerun the helper.
+That local human auth is fine for the one-time bootstrap publish; we just do not want the same auth model inside CI.
+
 After that first publish succeeds:
 
 1. open `https://www.npmjs.com/package/@paperclipai/adapter-acpx-local`
