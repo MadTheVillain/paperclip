@@ -732,8 +732,18 @@ function applyImportAdapterRunDefaults(
   adapterConfig: Record<string, unknown>,
 ) {
   const next = { ...adapterConfig };
+  if (
+    adapterType === "codex_local"
+    && !hasOwn(next, "dangerouslyBypassApprovalsAndSandbox")
+    && !hasOwn(next, "dangerouslyBypassSandbox")
+  ) {
+    next.dangerouslyBypassApprovalsAndSandbox = true;
+  }
   if (adapterType === "codex_local") {
     appendCodexImportArg(next, "--skip-git-repo-check");
+  }
+  if (adapterType === "claude_local" && !hasOwn(next, "dangerouslySkipPermissions")) {
+    next.dangerouslySkipPermissions = true;
   }
   return next;
 }
