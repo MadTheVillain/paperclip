@@ -266,7 +266,7 @@ function SearchPagePreview({
       </div>
 
       {state === "results" ? (
-        <div className="mx-auto flex w-full max-w-[680px] flex-col px-2 sm:px-4">
+        <div className="flex w-full max-w-[960px] flex-col px-2 sm:px-4">
           <div className="flex items-center justify-between py-2 text-[11px] uppercase tracking-wide text-muted-foreground">
             <span>{response.results.length} results · sorted by relevance</span>
           </div>
@@ -577,7 +577,7 @@ function SearchStories() {
             <div className="paperclip-story__label">Search result row</div>
             <h2 className="mt-1 text-lg font-semibold">Issue, agent, project rows</h2>
           </div>
-          <div className="mx-auto flex w-full max-w-[680px] flex-col gap-y-1">
+          <div className="flex w-full max-w-[960px] flex-col gap-y-1">
             {fixtureResults.map((result) => (
               <SearchResultRow
                 key={result.id}

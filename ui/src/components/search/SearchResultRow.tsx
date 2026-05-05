@@ -118,6 +118,7 @@ function SearchResultRowImpl({
   const titleHighlights = result.snippets.find((snippet) => snippet.field === "title")?.highlights;
   const bodySnippets = result.snippets.filter((snippet) => snippet.field !== "title").slice(0, 2);
   const previewImageUrl = result.previewImageUrl;
+  const hasRightRail = previewImageUrl || assigneeName || updated;
 
   return (
     <Link
@@ -130,7 +131,7 @@ function SearchResultRowImpl({
         <StatusIcon status={issue.status} />
       </div>
       <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 items-baseline gap-x-2.5">
+        <div className="flex min-w-0 flex-wrap items-baseline gap-x-2.5 gap-y-1">
           {issue.identifier ? (
             <span className="shrink-0 font-mono text-xs text-muted-foreground tabular-nums">
               {issue.identifier}
@@ -139,12 +140,8 @@ function SearchResultRowImpl({
           <HighlightedText
             text={issue.title}
             highlights={titleHighlights}
-            className="line-clamp-2 min-w-0 flex-1 text-sm font-medium leading-snug text-foreground"
+            className="min-w-0 flex-1 text-sm font-medium leading-snug text-foreground"
           />
-          <div className="ml-2 hidden shrink-0 items-center gap-2.5 text-xs text-muted-foreground sm:flex">
-            {assigneeName ? <Identity name={assigneeName} size="sm" /> : null}
-            {updated ? <span className="tabular-nums">{updated}</span> : null}
-          </div>
         </div>
         {bodySnippets.map((snippet, index) => (
           <SnippetLine
@@ -156,19 +153,31 @@ function SearchResultRowImpl({
             multiline
           />
         ))}
-        <div className="mt-1.5 flex items-center gap-2 text-xs text-muted-foreground sm:hidden">
-          {assigneeName ? <span className="truncate">{assigneeName}</span> : null}
-          {updated ? <span className="ml-auto tabular-nums">{updated}</span> : null}
-        </div>
+        {hasRightRail ? (
+          <div className="mt-1.5 flex items-center gap-2 text-xs text-muted-foreground sm:hidden">
+            {assigneeName ? <span className="truncate">{assigneeName}</span> : null}
+            {updated ? <span className="ml-auto tabular-nums">{updated}</span> : null}
+          </div>
+        ) : null}
       </div>
-      {previewImageUrl ? (
-        <img
-          src={previewImageUrl}
-          alt=""
-          loading="lazy"
-          decoding="async"
-          className="ml-2 mt-0.5 h-[88px] w-[88px] shrink-0 rounded-md border border-border bg-muted object-cover"
-        />
+      {hasRightRail ? (
+        <div className="ml-2 hidden shrink-0 flex-col items-end gap-2 sm:flex">
+          {assigneeName || updated ? (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              {assigneeName ? <Identity name={assigneeName} size="sm" /> : null}
+              {updated ? <span className="tabular-nums">{updated}</span> : null}
+            </div>
+          ) : null}
+          {previewImageUrl ? (
+            <img
+              src={previewImageUrl}
+              alt=""
+              loading="lazy"
+              decoding="async"
+              className="h-[88px] w-[88px] shrink-0 rounded-md border border-border bg-muted object-cover"
+            />
+          ) : null}
+        </div>
       ) : null}
     </Link>
   );
