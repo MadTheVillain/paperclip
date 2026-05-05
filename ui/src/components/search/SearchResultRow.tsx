@@ -198,19 +198,19 @@ function SnippetLine({ text, highlights, field, fallbackLabel, multiline = false
   return (
     <div
       className={cn(
-        "mt-1 flex min-w-0 gap-1.5 text-xs text-muted-foreground",
+        "mt-2.5 flex min-w-0 gap-1.5 text-xs text-muted-foreground",
         multiline ? "items-start" : "items-center",
       )}
     >
       <Icon
-        className={cn("h-3 w-3 shrink-0 text-muted-foreground/60", multiline && "mt-0.5")}
+        className={cn("h-3.5 w-3.5 shrink-0 text-muted-foreground/60", multiline && "mt-0.5")}
         aria-hidden
       />
       <span className="sr-only">{label}: </span>
       <HighlightedText
         text={text}
         highlights={highlights}
-        className={multiline ? "line-clamp-2 leading-snug" : "line-clamp-1 truncate"}
+        className={multiline ? "line-clamp-2 leading-relaxed" : "line-clamp-1 truncate"}
       />
     </div>
   );
