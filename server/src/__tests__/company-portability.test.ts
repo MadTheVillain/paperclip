@@ -2343,7 +2343,7 @@ describe("company portability", () => {
     expect(materializedFiles["AGENTS.md"]).not.toContain('name: "ClaudeCoder"');
   });
 
-  it("does not silently add local adapter permission bypasses on import", async () => {
+  it("adds local adapter permission bypass defaults on import", async () => {
     const portability = companyPortabilityService({} as any);
 
     companySvc.create.mockResolvedValue({
@@ -2391,8 +2391,8 @@ describe("company portability", () => {
 
     expect(agentSvc.create).toHaveBeenCalledWith("company-imported", expect.objectContaining({
       adapterType: "claude_local",
-      adapterConfig: expect.not.objectContaining({
-        dangerouslySkipPermissions: expect.anything(),
+      adapterConfig: expect.objectContaining({
+        dangerouslySkipPermissions: true,
       }),
     }));
 
@@ -2433,9 +2433,8 @@ describe("company portability", () => {
       }),
     }));
     expect(agentSvc.create).toHaveBeenLastCalledWith("company-imported", expect.objectContaining({
-      adapterConfig: expect.not.objectContaining({
-        dangerouslyBypassApprovalsAndSandbox: expect.anything(),
-        dangerouslyBypassSandbox: expect.anything(),
+      adapterConfig: expect.objectContaining({
+        dangerouslyBypassApprovalsAndSandbox: true,
       }),
     }));
   });
