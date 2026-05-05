@@ -383,7 +383,7 @@ describe("IssueChatThread", () => {
     });
   });
 
-  it("toggles the composer work mode for the next submission without changing the issue immediately", () => {
+  it("hides the planning chip on a standard issue and exposes the toggle through the menu", () => {
     const root = createRoot(container);
     const onWorkModeChange = vi.fn();
 
@@ -404,20 +404,40 @@ describe("IssueChatThread", () => {
       );
     });
 
-    const toggle = container.querySelector(
-      '[data-testid="issue-chat-composer-work-mode-toggle"]',
+    expect(
+      container.querySelector('[data-testid="issue-chat-composer-work-mode-toggle"]'),
+    ).toBeNull();
+    const composer = container.querySelector('[data-testid="issue-chat-composer"]');
+    expect(composer?.getAttribute("data-pending-work-mode")).toBe("standard");
+    expect(composer?.className).not.toContain("amber");
+
+    const menuTrigger = container.querySelector(
+      '[data-testid="issue-chat-composer-work-mode-menu"]',
     ) as HTMLButtonElement | null;
-    expect(toggle).not.toBeNull();
-    expect(toggle?.getAttribute("data-pending-work-mode")).toBe("standard");
+    expect(menuTrigger).not.toBeNull();
+    act(() => {
+      menuTrigger?.click();
+    });
+
+    const menuItem = document.querySelector(
+      '[data-testid="issue-chat-composer-work-mode-menu-toggle"]',
+    ) as HTMLButtonElement | null;
+    expect(menuItem).not.toBeNull();
+    expect(menuItem?.textContent).toContain("Switch to planning");
 
     act(() => {
-      toggle?.click();
+      menuItem?.click();
     });
 
     expect(onWorkModeChange).not.toHaveBeenCalled();
-    const composer = container.querySelector('[data-testid="issue-chat-composer"]');
     expect(composer?.getAttribute("data-pending-work-mode")).toBe("planning");
     expect(composer?.className).toContain("amber");
+
+    const visibleChip = container.querySelector(
+      '[data-testid="issue-chat-composer-work-mode-toggle"]',
+    );
+    expect(visibleChip).not.toBeNull();
+    expect(visibleChip?.textContent).toContain("Planning");
 
     act(() => {
       root.unmount();
