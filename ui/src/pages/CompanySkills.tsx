@@ -174,6 +174,12 @@ function shortRef(ref: string | null | undefined) {
   return ref.slice(0, 7);
 }
 
+function middleTruncate(value: string, maxLength = 72) {
+  if (value.length <= maxLength) return value;
+  const edgeLength = Math.floor((maxLength - 3) / 2);
+  return `${value.slice(0, edgeLength)}...${value.slice(value.length - edgeLength)}`;
+}
+
 function formatProjectScanSummary(result: CompanySkillProjectScanResult) {
   const parts = [
     `${result.discovered} found`,
@@ -533,8 +539,6 @@ function SkillPane({
   onSave: () => void;
   savePending: boolean;
 }) {
-  const { pushToast } = useToastActions();
-
   if (!detail) {
     if (loading) {
       return <PageSkeleton variant="detail" />;
@@ -553,6 +557,7 @@ function SkillPane({
   const body = file?.markdown ? stripFrontmatter(file.content) : file?.content ?? "";
   const currentPin = shortRef(detail.sourceRef);
   const latestPin = shortRef(updateStatus?.latestRef);
+  const displaySourcePath = detail.sourcePath ? middleTruncate(detail.sourcePath) : null;
   const removeBlocked = usedBy.length > 0;
   const removeDisabledReason = removeBlocked
     ? "Detach this skill from all agents before removing it."
@@ -598,21 +603,26 @@ function SkillPane({
 
         <div className="mt-4 space-y-3 border-t border-border pt-4 text-sm">
           <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
-            <div className="flex items-center gap-2">
+            <div className="flex min-w-0 items-center gap-2">
               <span className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Source</span>
-              <span className="flex min-w-0 flex-wrap items-center gap-2">
+              <span className="flex min-w-0 items-center gap-2">
                 <SourceIcon className="h-3.5 w-3.5 text-muted-foreground" />
-                {detail.sourcePath ? (
+                {detail.sourcePath && displaySourcePath ? (
                   <>
-                    <span className="max-w-full break-all text-muted-foreground">{detail.sourcePath}</span>
-                    <CopyText text={detail.sourcePath} copiedLabel="Copied path">
-                      <button
-                        type="button"
-                        className="inline-flex shrink-0 items-center gap-1.5 rounded-sm border border-border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                      >
-                        <Copy className="h-3.5 w-3.5" />
-                        Copy
-                      </button>
+                    <span
+                      className="block min-w-0 max-w-[min(34rem,55vw)] truncate font-mono text-xs text-muted-foreground"
+                      title={detail.sourcePath}
+                    >
+                      {displaySourcePath}
+                    </span>
+                    <CopyText
+                      text={detail.sourcePath}
+                      copiedLabel="Copied path"
+                      ariaLabel="Copy source path"
+                      title="Copy source path"
+                      className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-sm border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    >
+                      <Copy className="h-3.5 w-3.5" />
                     </CopyText>
                   </>
                 ) : (
