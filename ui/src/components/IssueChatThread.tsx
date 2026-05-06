@@ -2142,31 +2142,31 @@ function StaleDispositionWarningRow({
   const sections = mapCommentMetadataToSystemNoticeSections(metadata, { runAgentId });
 
   return (
-    <div id={anchorId} className="group flex justify-end py-1" data-testid="stale-disposition-warning">
-      <div className="max-w-[min(42rem,100%)] text-right">
-        <div className="flex flex-wrap items-center justify-end gap-x-1.5 gap-y-0.5 text-xs">
-          <button
-            type="button"
-            aria-expanded={open}
-            aria-controls={detailsId}
-            onClick={() => setOpen((value) => !value)}
-            className="font-medium text-muted-foreground underline-offset-2 transition-colors hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-          >
-            Stale disposition warning
-          </button>
-          <a
-            href={anchorId ? `#${anchorId}` : undefined}
-            className="text-muted-foreground transition-colors hover:text-foreground hover:underline"
-          >
-            {timeAgo(message.createdAt)}
-          </a>
+    <div id={anchorId} data-testid="stale-disposition-warning">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={detailsId}
+        className="group flex w-full items-center gap-2.5 rounded-lg px-1 py-2 text-left transition-colors hover:bg-accent/5"
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span className="text-sm font-medium text-foreground/80">
+          Stale disposition warning
+        </span>
+        <a
+          href={anchorId ? `#${anchorId}` : undefined}
+          onClick={(event) => event.stopPropagation()}
+          className="text-xs text-muted-foreground/60 underline-offset-2 hover:text-foreground hover:underline"
+        >
+          {timeAgo(message.createdAt)}
+        </a>
+        <ChevronDown className={cn("ml-auto h-4 w-4 shrink-0 text-muted-foreground/50 transition-transform", open && "rotate-180")} />
+      </button>
+      {open ? (
+        <div id={detailsId} className="space-y-1 py-1 pl-1">
+          <StaleDispositionWarningDetails sections={sections} />
         </div>
-        {open ? (
-          <div id={detailsId} className="mt-2 border-r border-border/70 pr-3">
-            <StaleDispositionWarningDetails sections={sections} />
-          </div>
-        ) : null}
-      </div>
+      ) : null}
     </div>
   );
 }

@@ -405,7 +405,7 @@ describe("IssueChatThread system notice routing", () => {
     expect(container.querySelector('[data-message-role="assistant"]')).not.toBeNull();
   });
 
-  it("folds stale successful-run disposition warnings into a right-aligned detail row", () => {
+  it("folds stale successful-run disposition warnings into the activity log disclosure style", () => {
     const comment: IssueChatComment = {
       id: "comment-stale-disposition-warning",
       companyId: "company-1",
@@ -452,16 +452,18 @@ describe("IssueChatThread system notice routing", () => {
 
     const row = container.querySelector('[data-testid="stale-disposition-warning"]');
     expect(row).not.toBeNull();
-    expect(row?.className).toContain("justify-end");
+    const toggle = row?.querySelector("button[aria-expanded]") as HTMLButtonElement;
+    expect(toggle.className).toContain("w-full");
+    expect(toggle.className).toContain("py-2");
     expect(row?.querySelector('[role="status"]')).toBeNull();
-    expect(row?.querySelector("svg")).toBeNull();
+    expect(row?.querySelector(".lucide-triangle-alert")).toBeNull();
+    expect(row?.querySelector(".lucide-chevron-down")).not.toBeNull();
     expect(row?.textContent).toContain("Stale disposition warning");
     expect(row?.textContent).not.toContain("This disposition warning is stale because the issue now has a newer disposition.");
     expect(row?.textContent).not.toContain("Paperclip needs a disposition before this issue can continue.");
     expect(container.textContent).not.toContain("run-stale");
     expect(row?.querySelector("a")?.getAttribute("href")).toBe("#comment-comment-stale-disposition-warning");
 
-    const toggle = row?.querySelector("button[aria-expanded]") as HTMLButtonElement;
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     act(() => {
       toggle.click();
