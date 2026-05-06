@@ -18,6 +18,8 @@ import { IssueProperties } from "./IssueProperties";
 
 const mockAgentsApi = vi.hoisted(() => ({
   list: vi.fn(),
+  adapterModels: vi.fn(),
+  adapterModelProfiles: vi.fn(),
 }));
 
 const mockProjectsApi = vi.hoisted(() => ({
@@ -353,6 +355,8 @@ describe("IssueProperties", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     mockAgentsApi.list.mockResolvedValue([]);
+    mockAgentsApi.adapterModels.mockResolvedValue([]);
+    mockAgentsApi.adapterModelProfiles.mockResolvedValue([]);
     mockProjectsApi.list.mockResolvedValue([]);
     mockIssuesApi.list.mockResolvedValue([]);
     mockIssuesApi.listLabels.mockResolvedValue([]);
@@ -802,6 +806,132 @@ describe("IssueProperties", () => {
 
     expect(container.textContent).toContain("Bug");
     expect(container.textContent).not.toContain("No labels");
+
+    act(() => root.unmount());
+  });
+
+  it("hides model options when the issue uses the assignee default", async () => {
+    mockAgentsApi.list.mockResolvedValue([
+      {
+        id: "agent-1",
+        name: "Senior Product Engineer",
+        role: "engineer",
+        title: null,
+        status: "active",
+        adapterType: "codex_local",
+        icon: null,
+      },
+    ]);
+
+    const root = renderProperties(container, {
+      issue: createIssue({
+        assigneeAgentId: "agent-1",
+        assigneeAdapterOverrides: null,
+      }),
+      childIssues: [],
+      onUpdate: vi.fn(),
+    });
+    await flush();
+
+    expect(container.textContent).not.toContain("Model lane");
+    expect(container.textContent).not.toContain("Codex options");
+
+    act(() => root.unmount());
+  });
+
+  it("edits existing custom assignee model options from the properties pane", async () => {
+    const onUpdate = vi.fn();
+    mockAgentsApi.list.mockResolvedValue([
+      {
+        id: "agent-1",
+        name: "Senior Product Engineer",
+        role: "engineer",
+        title: null,
+        status: "active",
+        adapterType: "codex_local",
+        icon: null,
+      },
+    ]);
+    mockAgentsApi.adapterModels.mockResolvedValue([
+      { id: "gpt-5.5", label: "GPT-5.5" },
+      { id: "gpt-5.4", label: "GPT-5.4" },
+    ]);
+
+    const root = renderProperties(container, {
+      issue: createIssue({
+        assigneeAgentId: "agent-1",
+        assigneeAdapterOverrides: {
+          adapterConfig: {
+            model: "gpt-5.4",
+            modelReasoningEffort: "high",
+          },
+        },
+      }),
+      childIssues: [],
+      onUpdate,
+    });
+    await flush();
+    await flush();
+
+    expect(container.textContent).toContain("Custom · gpt-5.4 · high");
+    expect(container.textContent).toContain("Model lane");
+
+    const modelButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("GPT-5.5"));
+    expect(modelButton).not.toBeUndefined();
+
+    await act(async () => {
+      modelButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onUpdate).toHaveBeenCalledWith({
+      assigneeAdapterOverrides: {
+        adapterConfig: {
+          model: "gpt-5.5",
+          modelReasoningEffort: "high",
+        },
+      },
+    });
+
+    act(() => root.unmount());
+  });
+
+  it("clears existing assignee adapter overrides from the properties pane", async () => {
+    const onUpdate = vi.fn();
+    mockAgentsApi.list.mockResolvedValue([
+      {
+        id: "agent-1",
+        name: "Senior Product Engineer",
+        role: "engineer",
+        title: null,
+        status: "active",
+        adapterType: "codex_local",
+        icon: null,
+      },
+    ]);
+
+    const root = renderProperties(container, {
+      issue: createIssue({
+        assigneeAgentId: "agent-1",
+        assigneeAdapterOverrides: {
+          adapterConfig: {
+            model: "gpt-5.4",
+          },
+        },
+      }),
+      childIssues: [],
+      onUpdate,
+    });
+    await flush();
+
+    const clearButton = container.querySelector('button[aria-label="Clear adapter options"]');
+    expect(clearButton).not.toBeNull();
+
+    await act(async () => {
+      clearButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onUpdate).toHaveBeenCalledWith({ assigneeAdapterOverrides: null });
 
     act(() => root.unmount());
   });
