@@ -106,8 +106,11 @@ test("captures planning mode UI for desktop and mobile", async ({ page }) => {
 
   await page.goto(issuePath);
   await expect(page.getByText("Planning").first()).toBeVisible();
-  await expect(page.getByTestId("issue-chat-thread-planning-notice")).toBeVisible();
-  await expect(page.locator('[data-issue-work-mode="planning"]')).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("issue-chat-composer")).toHaveAttribute("data-pending-work-mode", "planning");
+  const desktopPlanningToggle = page.getByTestId("issue-chat-composer-work-mode-toggle");
+  await expect(desktopPlanningToggle).toBeVisible();
+  await expect(desktopPlanningToggle).toHaveAttribute("data-pending-work-mode", "planning");
+  await expect(desktopPlanningToggle).toHaveAttribute("aria-pressed", "true");
 
   await page.screenshot({
     path: `${screenshotDir}/desktop-planning-detail-${timestamp}.png`,
@@ -123,13 +126,9 @@ test("captures planning mode UI for desktop and mobile", async ({ page }) => {
   });
 
   await page.goto(issuePath);
-  await page.getByRole("button", { name: "Standard" }).click();
-  await expect.poll(async () => {
-    const currentRes = await page.request.get(`${baseOrigin}/api/issues/${issue.id}`);
-    const current = await currentRes.json();
-    return current.workMode;
-  }, { timeout: 10_000 }).toBe("standard");
-  await expect(page.locator('[data-issue-work-mode="standard"]')).toHaveAttribute("aria-pressed", "true");
+  await page.getByTestId("issue-chat-composer-work-mode-toggle").click();
+  await expect(page.getByTestId("issue-chat-composer")).toHaveAttribute("data-pending-work-mode", "standard");
+  await expect(page.getByTestId("issue-chat-composer-work-mode-toggle")).toBeHidden();
   await page.screenshot({
     path: `${screenshotDir}/desktop-standard-toggle-${timestamp}.png`,
     fullPage: true,
@@ -139,9 +138,10 @@ test("captures planning mode UI for desktop and mobile", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(issuePath);
   await expect(page.getByText("Planning").first()).toBeVisible();
-  await expect(page.getByRole("button", { name: "Planning" })).toBeVisible();
-  await expect(page.getByTestId("issue-chat-thread-planning-notice")).toBeVisible();
-  await expect(page.locator('[data-issue-work-mode="planning"]')).toHaveAttribute("aria-pressed", "true");
+  const mobilePlanningToggle = page.getByTestId("issue-chat-composer-work-mode-toggle");
+  await expect(mobilePlanningToggle).toBeVisible();
+  await expect(mobilePlanningToggle).toHaveAttribute("data-pending-work-mode", "planning");
+  await expect(mobilePlanningToggle).toHaveAttribute("aria-pressed", "true");
   await page.screenshot({
     path: `${screenshotDir}/mobile-planning-detail-${timestamp}.png`,
     fullPage: true,
