@@ -129,7 +129,7 @@ describe("Sidebar", () => {
     mockInstanceSettingsApi.getExperimental.mockResolvedValue({ enableIsolatedWorkspaces: false });
     const root = await renderSidebar();
 
-    const topSearchLink = container.querySelector('a[aria-label="Open search"]');
+    const topSearchLink = container.querySelector('a[aria-label="Search"]');
     expect(topSearchLink?.getAttribute("href")).toBe("/search");
     const workLinks = [...container.querySelectorAll("nav a")].map((anchor) => anchor.textContent?.trim());
     expect(workLinks).not.toContain("Search");

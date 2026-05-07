@@ -61,8 +61,8 @@ export function Sidebar() {
           variant="ghost"
           size="icon-sm"
           className="text-muted-foreground shrink-0"
-          aria-label="Open search"
-          title="Open search"
+          aria-label="Search"
+          title="Search"
         >
           <NavLink to="/search">
             <Search className="h-4 w-4" />
