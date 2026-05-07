@@ -7,6 +7,8 @@ import type {
   PluginIssueOriginKind,
   PluginManagedAgentResolution,
   PluginManagedRoutineResolution,
+  PluginManagedSkillResolution,
+  CompanySkill,
   Company,
   Project,
   Routine,
@@ -997,8 +999,6 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
             updatedByUserId: null,
             lastTriggeredAt: null,
             lastEnqueuedAt: null,
-            latestRevisionId: null,
-            latestRevisionNumber: 1,
             createdAt: now,
             updatedAt: now,
             managedByPlugin: {
@@ -1087,6 +1087,115 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
         },
       },
     },
+    skills: {
+      managed: {
+        async get(skillKey, companyId) {
+          requireCapability(manifest, capabilitySet, "skills.managed");
+          const declaration = manifest.skills?.find((skill) => skill.skillKey === skillKey);
+          if (!declaration) {
+            return {
+              pluginKey: manifest.id,
+              resourceKind: "skill",
+              resourceKey: skillKey,
+              companyId,
+              skillId: null,
+              skill: null,
+              status: "missing",
+            } satisfies PluginManagedSkillResolution;
+          }
+          const externalId = `${manifest.id}:skill:${skillKey}`;
+          const existingEntity = [...entities.values()].find((entity) =>
+            entity.entityType === "managed_resource"
+            && entity.scopeKind === "company"
+            && entity.scopeId === companyId
+            && entity.externalId === externalId
+          );
+          const existingSkill = existingEntity?.data?.skill as CompanySkill | undefined;
+          if (existingSkill && existingSkill.companyId === companyId) {
+            return {
+              pluginKey: manifest.id,
+              resourceKind: "skill",
+              resourceKey: skillKey,
+              companyId,
+              skillId: existingSkill.id,
+              skill: existingSkill,
+              status: "resolved",
+            } satisfies PluginManagedSkillResolution;
+          }
+          return {
+            pluginKey: manifest.id,
+            resourceKind: "skill",
+            resourceKey: skillKey,
+            companyId,
+            skillId: null,
+            skill: null,
+            status: "missing",
+          } satisfies PluginManagedSkillResolution;
+        },
+        async reconcile(skillKey, companyId) {
+          const existing = await this.get(skillKey, companyId);
+          if (existing.skill) return existing;
+          const declaration = manifest.skills?.find((skill) => skill.skillKey === skillKey);
+          if (!declaration) return existing;
+          const now = new Date();
+          const skill = {
+            id: randomUUID(),
+            companyId,
+            key: `plugin/${manifest.id.replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}/${skillKey}`,
+            slug: declaration.slug ?? skillKey,
+            name: declaration.displayName,
+            description: declaration.description ?? null,
+            markdown: declaration.markdown ?? `# ${declaration.displayName}\n`,
+            sourceType: "catalog",
+            sourceLocator: null,
+            sourceRef: null,
+            trustLevel: "markdown_only",
+            compatibility: "compatible",
+            fileInventory: [{ path: "SKILL.md", kind: "skill" }],
+            metadata: {
+              sourceKind: "catalog",
+              pluginManagedResource: {
+                pluginKey: manifest.id,
+                resourceKind: "skill",
+                resourceKey: skillKey,
+              },
+            },
+            createdAt: now,
+            updatedAt: now,
+          } satisfies CompanySkill;
+          const nowIso = now.toISOString();
+          const record: PluginEntityRecord = {
+            id: randomUUID(),
+            entityType: "managed_resource",
+            scopeKind: "company",
+            scopeId: companyId,
+            externalId: `${manifest.id}:skill:${skillKey}`,
+            title: declaration.displayName,
+            status: null,
+            data: { resourceKind: "skill", resourceKey: skillKey, skillId: skill.id, skill },
+            createdAt: nowIso,
+            updatedAt: nowIso,
+          };
+          entities.set(record.id, record);
+          return {
+            pluginKey: manifest.id,
+            resourceKind: "skill",
+            resourceKey: skillKey,
+            companyId,
+            skillId: skill.id,
+            skill,
+            status: "created",
+          } satisfies PluginManagedSkillResolution;
+        },
+        async reset(skillKey, companyId) {
+          const resolved = await this.reconcile(skillKey, companyId);
+          return {
+            ...resolved,
+            status: resolved.skill ? "reset" : resolved.status,
+          } satisfies PluginManagedSkillResolution;
+        },
+      },
+    },
     companies: {
       async list(input) {
         requireCapability(manifest, capabilitySet, "companies.read");
@@ -1147,7 +1256,6 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
           title: input.title,
           description: input.description ?? null,
           status: input.status ?? "todo",
-          workMode: input.workMode ?? "standard",
           priority: input.priority ?? "medium",
           assigneeAgentId: input.assigneeAgentId ?? null,
           assigneeUserId: input.assigneeUserId ?? null,
@@ -1164,7 +1272,7 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
           originRunId: input.originRunId ?? null,
           requestDepth: input.requestDepth ?? 0,
           billingCode: input.billingCode ?? null,
-          assigneeAdapterOverrides: null,
+          assigneeAdapterOverrides: input.assigneeAdapterOverrides ?? null,
           executionWorkspaceId: input.executionWorkspaceId ?? null,
           executionWorkspacePreference: input.executionWorkspacePreference ?? null,
           executionWorkspaceSettings: input.executionWorkspaceSettings ?? null,
@@ -1261,12 +1369,9 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
           id: randomUUID(),
           companyId: parentIssue.companyId,
           issueId,
-          authorType: options?.authorAgentId ? "agent" : "system",
           authorAgentId: options?.authorAgentId ?? null,
           authorUserId: null,
           body,
-          presentation: null,
-          metadata: null,
           createdAt: now,
           updatedAt: now,
         };

@@ -189,6 +189,13 @@ export interface HostServices {
     managedRun(params: WorkerToHostMethods["routines.managed.run"][0]): Promise<WorkerToHostMethods["routines.managed.run"][1]>;
   };
 
+  /** Provides `skills.managed.*`. */
+  skills: {
+    managedGet(params: WorkerToHostMethods["skills.managed.get"][0]): Promise<WorkerToHostMethods["skills.managed.get"][1]>;
+    managedReconcile(params: WorkerToHostMethods["skills.managed.reconcile"][0]): Promise<WorkerToHostMethods["skills.managed.reconcile"][1]>;
+    managedReset(params: WorkerToHostMethods["skills.managed.reset"][0]): Promise<WorkerToHostMethods["skills.managed.reset"][1]>;
+  };
+
   /** Provides issue read/write, relation, checkout, wakeup, summary, comment methods. */
   issues: {
     list(params: WorkerToHostMethods["issues.list"][0]): Promise<WorkerToHostMethods["issues.list"][1]>;
@@ -367,6 +374,9 @@ const METHOD_CAPABILITY_MAP: Record<WorkerToHostMethodName, PluginCapability | n
     "routines.managed.reset": "routines.managed",
     "routines.managed.update": "routines.managed",
     "routines.managed.run": "routines.managed",
+    "skills.managed.get": "skills.managed",
+    "skills.managed.reconcile": "skills.managed",
+    "skills.managed.reset": "skills.managed",
 
   // Issues
   "issues.list": "issues.read",
@@ -618,6 +628,17 @@ export function createHostClientHandlers(
     }),
     "routines.managed.run": gated("routines.managed.run", async (params) => {
       return services.routines.managedRun(params);
+    }),
+
+    // Skills
+    "skills.managed.get": gated("skills.managed.get", async (params) => {
+      return services.skills.managedGet(params);
+    }),
+    "skills.managed.reconcile": gated("skills.managed.reconcile", async (params) => {
+      return services.skills.managedReconcile(params);
+    }),
+    "skills.managed.reset": gated("skills.managed.reset", async (params) => {
+      return services.skills.managedReset(params);
     }),
 
     // Issues

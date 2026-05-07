@@ -22,6 +22,7 @@ import type {
   IssueDocument,
   IssueDocumentSummary,
   IssueRelationIssueSummary,
+  IssueAssigneeAdapterOverrides,
   IssueThreadInteraction,
   SuggestTasksInteraction,
   AskUserQuestionsInteraction,
@@ -32,6 +33,8 @@ import type {
   PluginManagedAgentResolution,
   PluginManagedProjectResolution,
   PluginManagedRoutineResolution,
+  PluginManagedSkillResolution,
+  CompanySkill,
   Routine,
   RoutineRun,
   Agent,
@@ -54,6 +57,10 @@ export type {
   PluginManagedProjectResolution,
   PluginManagedRoutineDeclaration,
   PluginManagedRoutineResolution,
+  PluginManagedSkillDeclaration,
+  PluginManagedSkillFileDeclaration,
+  PluginManagedSkillResolution,
+  CompanySkill,
   Routine,
   RoutineRun,
   PluginLocalFolderDeclaration,
@@ -841,6 +848,19 @@ export interface PluginRoutinesClient {
 }
 
 /**
+ * `ctx.skills` — resolve and reconcile plugin-managed company skills.
+ *
+ * Requires `skills.managed` capability.
+ */
+export interface PluginSkillsClient {
+  managed: {
+    get(skillKey: string, companyId: string): Promise<PluginManagedSkillResolution>;
+    reconcile(skillKey: string, companyId: string): Promise<PluginManagedSkillResolution>;
+    reset(skillKey: string, companyId: string): Promise<PluginManagedSkillResolution>;
+  };
+}
+
+/**
  * `ctx.data` — register `getData` handlers that back `usePluginData()` in the
  * plugin's frontend components.
  *
@@ -1257,12 +1277,12 @@ export interface PluginIssuesClient {
     title: string;
     description?: string;
     status?: Issue["status"];
-    workMode?: Issue["workMode"];
     priority?: Issue["priority"];
     assigneeAgentId?: string;
     assigneeUserId?: string | null;
     requestDepth?: number;
     billingCode?: string | null;
+    assigneeAdapterOverrides?: IssueAssigneeAdapterOverrides | null;
     surfaceVisibility?: IssueSurfaceVisibility;
     originKind?: PluginIssueOriginKind;
     originId?: string | null;
@@ -1281,7 +1301,6 @@ export interface PluginIssuesClient {
       | "title"
       | "description"
       | "status"
-      | "workMode"
       | "priority"
       | "assigneeAgentId"
       | "assigneeUserId"
@@ -1623,6 +1642,9 @@ export interface PluginContext {
 
   /** Resolve and reconcile plugin-managed routines. Requires `routines.managed`. */
   routines: PluginRoutinesClient;
+
+  /** Resolve and reconcile plugin-managed company skills. Requires `skills.managed`. */
+  skills: PluginSkillsClient;
 
   /** Read company metadata. Requires `companies.read`. */
   companies: PluginCompaniesClient;

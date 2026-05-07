@@ -27,11 +27,13 @@ import type {
   IssueComment,
   IssueDocument,
   IssueDocumentSummary,
+  IssueAssigneeAdapterOverrides,
   IssueThreadInteraction,
   CreateIssueThreadInteraction,
   PluginManagedAgentResolution,
   PluginManagedProjectResolution,
   PluginManagedRoutineResolution,
+  PluginManagedSkillResolution,
   Routine,
   RoutineRun,
   Agent,
@@ -821,6 +823,18 @@ export interface WorkerToHostMethods {
     },
     result: RoutineRun,
   ];
+  "skills.managed.get": [
+    params: { skillKey: string; companyId: string },
+    result: PluginManagedSkillResolution,
+  ];
+  "skills.managed.reconcile": [
+    params: { skillKey: string; companyId: string },
+    result: PluginManagedSkillResolution,
+  ];
+  "skills.managed.reset": [
+    params: { skillKey: string; companyId: string },
+    result: PluginManagedSkillResolution,
+  ];
 
   // Issues
   "issues.list": [
@@ -852,12 +866,12 @@ export interface WorkerToHostMethods {
       title: string;
       description?: string;
       status?: string;
-      workMode?: string;
       priority?: string;
       assigneeAgentId?: string;
       assigneeUserId?: string | null;
       requestDepth?: number;
       billingCode?: string | null;
+      assigneeAdapterOverrides?: IssueAssigneeAdapterOverrides | null;
       surfaceVisibility?: string | null;
       originKind?: string | null;
       originId?: string | null;
