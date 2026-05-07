@@ -224,13 +224,13 @@ const statuses: ReadonlyArray<{ value: string; label: string; color: string; des
     value: "backlog",
     label: "Backlog",
     color: issueStatusText.backlog ?? issueStatusTextDefault,
-    description: "Parked — assignee will not be waked",
+    description: "Parked — assignee will not be woken",
   },
   {
     value: "todo",
     label: "Todo",
     color: issueStatusText.todo ?? issueStatusTextDefault,
-    description: "Executable — assignee will be waked",
+    description: "Executable — assignee will be woken",
   },
   { value: "in_progress", label: "In Progress", color: issueStatusText.in_progress ?? issueStatusTextDefault },
   { value: "in_review", label: "In Review", color: issueStatusText.in_review ?? issueStatusTextDefault },
@@ -1991,7 +1991,7 @@ export function NewIssueDialog() {
           >
             <Flag className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-300" />
             <span className="leading-snug">
-              Assigning implies executable intent — leave status as <span className="font-medium">Backlog</span> only to deliberately park this. The assignee will not be waked until status moves to <span className="font-medium">Todo</span> or <span className="font-medium">In Progress</span>.
+              Assigning implies executable intent — leave status as <span className="font-medium">Backlog</span> only to deliberately park this. The assignee will not be woken until status moves to <span className="font-medium">Todo</span> or <span className="font-medium">In Progress</span>.
             </span>
           </div>
         ) : null}

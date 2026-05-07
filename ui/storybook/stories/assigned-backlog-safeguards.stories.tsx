@@ -66,7 +66,7 @@ function CreationFormPanel() {
         <div className="flex items-start gap-2 rounded-md border border-amber-300/70 bg-amber-50/90 px-3 py-2 text-xs text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-100">
           <Flag className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-300" />
           <span className="leading-snug">
-            Assigning implies executable intent — leave status as <span className="font-medium">Backlog</span> only to deliberately park this. The assignee will not be waked until status moves to <span className="font-medium">Todo</span> or <span className="font-medium">In Progress</span>.
+            Assigning implies executable intent — leave status as <span className="font-medium">Backlog</span> only to deliberately park this. The assignee will not be woken until status moves to <span className="font-medium">Todo</span> or <span className="font-medium">In Progress</span>.
           </span>
         </div>
       </div>
@@ -77,14 +77,14 @@ function CreationFormPanel() {
           <CircleDot className="h-3 w-3 mt-0.5 shrink-0 text-purple-500" />
           <span className="flex flex-col text-left leading-tight">
             <span>Backlog</span>
-            <span className="text-[10px] text-muted-foreground">Parked — assignee will not be waked</span>
+            <span className="text-[10px] text-muted-foreground">Parked — assignee will not be woken</span>
           </span>
         </div>
         <div className="flex w-full items-start gap-2 rounded bg-accent px-2 py-1.5">
           <CircleDot className="h-3 w-3 mt-0.5 shrink-0 text-blue-500" />
           <span className="flex flex-col text-left leading-tight">
             <span>Todo</span>
-            <span className="text-[10px] text-muted-foreground">Executable — assignee will be waked</span>
+            <span className="text-[10px] text-muted-foreground">Executable — assignee will be woken</span>
           </span>
         </div>
       </div>
